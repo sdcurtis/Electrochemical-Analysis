@@ -37,7 +37,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
 import matplotlib.animation as animation
 from matplotlib.animation import FuncAnimation
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2TkAgg
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import numpy as np
 import csv
 from pylab import *
@@ -86,6 +86,10 @@ sg_window = 5           ### Savitzky-Golay window (in mV range), must be odd num
 sg_degree = 1           ### Savitzky-Golay polynomial degree
 polyfit_deg = 15        ### degree of polynomial fit
 
+cutoff_frequency = 50          ### frequency that separates 'low' and 'high'
+                               ### frequencies for regression analysis and
+                               ### smoothing manipulation
+
 #############################
 ### Checkpoint Parameters ###
 #############################
@@ -110,8 +114,10 @@ column_index = -2           ### column index for list_val.
 ######################################################
 ### Low frequency baseline manipulation Parameters ###
 ######################################################
-LowFrequencyOffset = 0                  ### Vertical offset of normalized data for frequencies <= 50Hz
-LowFrequencySlope = 0          ### Slope manipulation of norm data for freq. <= 50Hz
+LowFrequencyOffset = 0         ### Vertical offset of normalized data for
+                               ### user specified 'Low Frequency'
+LowFrequencySlope = 0          ### Slope manipulation of norm data for user
+                               ### specified 'Low Frequency'
 
 
 ###############
@@ -134,7 +140,7 @@ SMALL_FONT = ('Verdana', 8)
 def _retrieve_file(file, electrode, frequency):
 
     if e_var == 'single':
-        filename = '%s%dHz_%d.txt' % (handle_variable, frequency,file)
+        filename = '%s%dHz_%d.txt' % (handle_variable, frequency, file)
         filename2 = '%s%dHz__%d.txt' % (handle_variable, frequency, file)
 
     elif e_var == 'multiple':
@@ -200,7 +206,6 @@ def ReadData(myfile, electrode):
                 data_dict.setdefault(potential_value, []).append(current_value)
                 list_num = list_num + 1
 
-    currents = [abs(value) for value in currents]
 
     ### if there are 0's in the list (if the preallocation added to many)
     ### then remove them
@@ -242,7 +247,7 @@ class MainWindow(tk.Tk):
 
         #tk.Tk.__init__(self, *args, **kwargs)
         self.master = master
-        self.master.wm_title('Real-Time E-AB Sensing Platform')
+        self.master.wm_title('SACMES')
 
         self.master.rowconfigure(0, weight=1)
         self.master.columnconfigure(0, weight=1)
@@ -260,6 +265,7 @@ class MainWindow(tk.Tk):
         ShowFrames[InputFrame] = frame
         frame.grid(row=0, column=0, sticky = 'nsew')
         self.show_frame(InputFrame)
+
 
         self._create_toolbar()
 
@@ -281,11 +287,8 @@ class MainWindow(tk.Tk):
         self.delimiter_value = IntVar()
         self.delimiter_value.set(1)
 
-        baseline_adjustment_menu = Menu(editmenu)
-        baseline_adjustment_menu.add_command(label='Absolute Max/Min', command = lambda: self.baseline_adjustment('Abs'))
-        baseline_adjustment_menu.add_command(label='Linear Fit', command = lambda: self.baseline_adjustment('Linear'))
-        editmenu.add_cascade(label='Peak Height Extraction Settings', menu = baseline_adjustment_menu)
         menubar.add_cascade(label="Settings", menu=editmenu)
+
 
     def extraction_adjustment_frame(self):
         global delimiter
@@ -302,6 +305,7 @@ class MainWindow(tk.Tk):
 
         apply_list_val = ttk.Button(win, text="Apply", command=lambda: self.get_list_val())
         apply_list_val.grid(row=2, column=0,pady=3)
+
 
         l = tk.Label(win, text="Delimiter between data columns:")
         l.grid(row=3, column=0)
@@ -322,14 +326,6 @@ class MainWindow(tk.Tk):
 
         column_index = int(self.list_val_entry.get())
         column_index = column_index - 4
-
-    def baseline_adjustment(self, method):
-        global PHE_method
-
-        if method == 'Abs':
-            PHE_method = 'Abs'
-        elif method == 'Linear':
-            PHE_method = 'Linear'
 
     def show_frame(self, cont):
 
@@ -728,7 +724,7 @@ class InputFrame(tk.Frame):                         # first frame that is displa
 
 
     def FindFile(self, parent):
-        global FilePath, ExportPath, FoundFilePath, NoSelectedPath
+        global FilePath, ExportPath, FoundFilePath, NoSelectedPath, DataFolder
 
         try:
 
@@ -852,7 +848,7 @@ class InputFrame(tk.Frame):                         # first frame that is displa
     ### they have, initialize the program                             ###
     #####################################################################
     def CheckPoint(self):
-        global mypath, Option, SelectedOptions, FileHandle, AlreadyInitiated, delimeter
+        global mypath, Option, SelectedOptions, ExportFilePath, AlreadyInitiated, delimeter
 
         try:
             #--- check to see if the data analysis method has been selected by the user ---#
@@ -874,7 +870,7 @@ class InputFrame(tk.Frame):                         # first frame that is displa
         try:
             mypath = FilePath                       # file path
             FileHandle = str(self.filehandle.get()) # handle for exported .txt file
-            FileHandle = ''.join(ExportPath + FileHandle)
+            ExportFilePath = ''.join(ExportPath + FileHandle)
 
             if self.PathWarningExists:
                 self.NoSelectedPath.grid_forget()
@@ -1065,7 +1061,6 @@ class CheckPoint():
                         self.analysis_count += 1
 
                 if self.analysis_count == self.analysis_limit:
-                    print('Proceeding. Analysis Count = %d. Analysis Limit = %d' % (self.analysis_count, self.analysis_limit))
                     root.after(10,self.proceed)
 
 
@@ -1281,20 +1276,20 @@ class RealTimeManipulationFrame(tk.Frame):
         self.SmoothingEntry.insert(END, sg_window)
 
         #--- Check for the presence of high and low frequencies ---#
-        if frequency_list[-1] > 50:
+        if frequency_list[-1] > cutoff_frequency:
             self.High = True
         else:
             self.High = False
 
-        if frequency_list[0] <= 50:
+        if frequency_list[0] <= cutoff_frequency:
             self.Low = True
         else:
             self.Low = False
 
-        ###################################################
-        ### If a frequency <= 50Hz exists, grid a frame ###
-        ### for low frequency data manipulation         ###
-        ###################################################
+        ##########################################################
+        ### If a frequency <= cutoff_frequency exists, grid    ###
+        ### a frame for low frequency data manipulation        ###
+        ##########################################################
         if self.Low is True:
             LowParameterFrame = tk.Frame(RegressionFrame)
             LowParameterFrame.grid(row=3,column=0,columnspan=4, sticky='nsew')
@@ -1319,10 +1314,10 @@ class RealTimeManipulationFrame(tk.Frame):
             self.low_xend_entry.grid(row=1,column=1)
             low_xend_entry = self.low_xend_entry
 
-        ##################################################
-        ### If a frequency > 50Hz exists, grid a frame ###
-        ### for high frequency data manipulation       ###
-        ##################################################
+        #########################################################
+        ### If a frequency > cutoff_frequency exists, grid    ###
+        ### a frame for high frequency data manipulation      ###
+        #########################################################
         if self.High is True:
             HighParameterFrame = tk.Frame(RegressionFrame)
             HighParameterFrame.grid(row=3,column=0,columnspan=4, sticky='nsew')
@@ -1353,10 +1348,10 @@ class RealTimeManipulationFrame(tk.Frame):
         ############################################################
         if self.High is True:
             if self.Low is True:
-                self.SelectLowParameters = ttk.Button(RegressionFrame, style = 'Off.TButton', text = 'f <= 50Hz', command = lambda: self.show_frame('LowParameterFrame'))
+                self.SelectLowParameters = ttk.Button(RegressionFrame, style = 'Off.TButton', text = 'f <= %dHz' % cutoff_frequency, command = lambda: self.show_frame('LowParameterFrame'))
                 self.SelectLowParameters.grid(row=4,column=0,pady=5,padx=5)
 
-                self.SelectHighParameters = ttk.Button(RegressionFrame, style = 'On.TButton', text = 'f > 50Hz', command = lambda: self.show_frame('HighParameterFrame'))
+                self.SelectHighParameters = ttk.Button(RegressionFrame, style = 'On.TButton', text = 'f > %dHz' % cutoff_frequency, command = lambda: self.show_frame('HighParameterFrame'))
                 self.SelectHighParameters.grid(row=4,column=1,pady=5,padx=5)
 
 
@@ -1440,14 +1435,14 @@ class RealTimeManipulationFrame(tk.Frame):
 
         if self.Low:
 
-            #--- parameters for frequencies equal or below 50Hz ---#
+            #--- parameters for frequencies equal or below cutoff_frequency ---#
             low_xstart = float(self.low_xstart_entry.get())          # xstart/xend adjust the points at the start and end of the voltammogram/smoothed currents, respectively
             low_xend = float(self.low_xend_entry.get())
 
 
         if self.High:
 
-            #--- parameters for frequencies above 50Hz ---#
+            #--- parameters for frequencies above cutoff_frequency ---#
             high_xstart = float(self.high_xstart_entry.get())
             high_xend = float(self.high_xend_entry.get())
 
@@ -1465,10 +1460,8 @@ class RealTimeManipulationFrame(tk.Frame):
     def RealTimeKDM(self):
         global HighFrequency, LowFrequencyOffset, LowFrequencySlope, LowFrequency, HighLowList, LowFrequencyEntry, HighFrequencyEntry, ExistVar, WrongFrequencyLabel, RatioMetricCheck
 
-        HighFrequency = int(HighFrequencyEntry.get())
-        LowFrequency = int(LowFrequencyEntry.get())
-        HighLowList['High'] = HighFrequency
-        HighLowList['Low'] = LowFrequency
+        TempHighFrequency = int(HighFrequencyEntry.get())
+        TempLowFrequency = int(LowFrequencyEntry.get())
 
         LowFrequencyOffset = float(self.LowFrequencyOffset.get())
         LowFrequencySlope = float(self.LowFrequencySlope.get())
@@ -1511,8 +1504,8 @@ class RealTimeManipulationFrame(tk.Frame):
 
         #--- else, if they both exist, remove the warning label ---#
         else:
-            HighLowList['High'] = HighFrequency
-            HighLowList['Low'] = LowFrequency
+            HighLowList['High'] = TempHighFrequency
+            HighLowList['Low'] = TempLowFrequency
 
             data_normalization.ResetRatiometricData()
 
@@ -1865,9 +1858,9 @@ class InitializeFigureCanvas():
             ### Set axis labels ###
             #######################
 
-            ax[0,0].set_ylabel('Current (µA)',fontweight='bold')
+            ax[0,0].set_ylabel('Current\n(µA)',fontweight='bold')
             if SelectedOptions == 'Peak Height Extraction':
-                ax[1,0].set_ylabel('Peak Height (µA)',fontweight='bold')
+                ax[1,0].set_ylabel('Peak Height\n(µA)',fontweight='bold')
             elif SelectedOptions == 'Area Under the Curve':
                 ax[1,0].set_ylabel('AUC (a.u.)',fontweight='bold')
             ax[2,0].set_ylabel('Normalized', fontweight='bold')
@@ -1910,7 +1903,6 @@ class InitializeFigureCanvas():
             #################################################################################
 
 
-                self.CreateArtists(xfrequency, subplot_count)
                 #---Set Subplot Title---#
                 frequency = str(frequency)
                 ax[0,subplot_count].set_title(''.join(frequency+' Hz'),fontweight='bold')
@@ -1987,8 +1979,8 @@ class InitializeFigureCanvas():
             ## Set the X and Y axes for the Ratriometric  ##
             ## Plots (KDM and Norm Ratio)                 ##
             ################################################
-            axes[0,0].set_ylabel('% Signal')
-            axes[0,1].set_ylabel('% Signal')
+            axes[0,0].set_ylabel('% Signal', fontweight='bold')
+            axes[0,1].set_ylabel('% Signal', fontweight='bold')
 
 
             if XaxisOptions == 'Experiment Time':
@@ -2111,7 +2103,7 @@ class InitializeFigureCanvas():
             ### Get the high and low potentials ###
             #######################################
 
-            if int(freq) > 50:
+            if int(freq) > cutoff_frequency:
 
                 if not HighAlreadyReset:
                     high_xstart = max(potentials)
@@ -2121,7 +2113,7 @@ class InitializeFigureCanvas():
                 xend = high_xend
                 xstart = high_xstart
 
-            elif int(freq) <= 50:
+            elif int(freq) <= cutoff_frequency:
 
                 if not LowAlreadyReset:
                     low_xstart = max(potentials)
@@ -2182,7 +2174,7 @@ class InitializeFigureCanvas():
                 AUC_index = 1
                 AUC = 0
 
-                AUC_potentials = [abs(potential) for potential in adjusted_potentials]
+                AUC_potentials = adjusted_potentials
                 AUC_min = min(adjusted_currents)
                 AUC_currents = [Y - AUC_min for Y in adjusted_currents]
 
@@ -2698,12 +2690,12 @@ class ElectrochemicalAnimation():
         ########################################
         ### Polynomical Regression Range (V) ###
         ########################################
-        #--- if the frequency is equal or below 50Hz, use the low freq parameters ---#
-        if frequency <= 50:
+        #--- if the frequency is equal or below cutoff_frequency, use the low freq parameters ---#
+        if frequency <= cutoff_frequency:
             xstart = low_xstart
             xend = low_xend
 
-        #--- if the frequency is above 50Hz, use the high freq parameters ---#
+        #--- if the frequency is above cutoff_frequency, use the high freq parameters ---#
         else:
             xstart = high_xstart
             xend = high_xend
@@ -2730,15 +2722,16 @@ class ElectrochemicalAnimation():
         adjusted_potentials = [value for value in potentials if xend <= value <= xstart]
 
         #########################################
-        ### Savitzky-Golay smoothing          ###
+        ### Savitzky-Golay Smoothing          ###
         #########################################
-        min_potential = min(potentials)             # find the min potential
-        sg_limit = sg_window/1000                   # mV --> V
+        min_potential = min(potentials)            # find the min potential
+        sg_limit = sg_window/1000                  # mV --> V
 
         # shift all values positive
         sg_potentials = [x - min_potential for x in potentials]
 
-        # find how many fit within the sg potential window
+        # find how many points fit within the sg potential window
+        # this will be how many points are included in the rolling average
         sg_range = len([x for x in sg_potentials if x <= sg_limit])
 
         #--- Savitzky-golay Window must be greater than the range ---#
@@ -2748,13 +2741,16 @@ class ElectrochemicalAnimation():
         #-- if the range is even, make it odd --#
         if sg_range % 2 == 0:
             sg_range = sg_range + 1
+
+        # Apply the smoothing function and create a dictionary pairing
+        # each potential with its corresponding current
         try:
             smooth_currents = savgol_filter(currents, sg_range, sg_degree)
             data_dict = dict(zip(potentials,smooth_currents))
-
         except ValueError:
             smooth_currents = savgol_filter(currents, 15, sg_degree)
             data_dict = dict(zip(potentials,smooth_currents))
+
 
         #######################################
         ### adjust the smooth currents to   ###
@@ -2787,40 +2783,13 @@ class ElectrochemicalAnimation():
         max1 = max(eval_regress[:fit_half])
         max2 = max(eval_regress[fit_half:])
 
-        #########################################
-        ### Linear Fit Peak Height Extraction ###
-        #########################################
-
-        #-- If the user selects 'Linear Fit' in the 'Peak Height Extraction Settings'
-        #-- within the Settings toolbar this analysis method will be used for PHE
-        linear_fit = np.polyfit([regression_dict[min1],regression_dict[min2]],[min1,min2],1)
-        linear_regression = polyval(linear_fit,[regression_dict[min1],regression_dict[min2]]).tolist()
-
-        slope = (linear_regression[0]-linear_regression[1])/abs((regression_dict[min1] - regression_dict[min2]))
-        b = (slope*regression_dict[min1]) - linear_regression[0]
-        b1 = ((linear_regression[0]*regression_dict[min1]) - (regression_dict[min2]*linear_regression[1]))/(regression_dict[min1] - regression_dict[min2])
-        i_index = adjusted_potentials.index(regression_dict[min1])
-        f_index = adjusted_potentials.index(regression_dict[min2])
-
-        regression_potentials = adjusted_potentials[i_index:f_index]
-        linear_approx = []
-        for value in regression_potentials:
-            linear_value = slope*value + b
-            linear_approx.append(linear_value)
 
         ################################################################
         ### If the user selected Peak Height Extraction, analyze PHE ###
         ################################################################
 
         if SelectedOptions == 'Peak Height Extraction':
-            ##############################
-            ### Peak Height Extraction ###
-            ##############################
-            if PHE_method == 'Abs':
-                Peak_Height = max(max1,max2)-min(min1,min2)
-            elif PHE_method == 'Linear':
-                Peak_Height = max([(y - y0) for y,y0 in zip(adjusted_currents,linear_approx)])
-
+            Peak_Height = max(max1,max2)-min(min1,min2)
             data = Peak_Height
 
 
@@ -2836,7 +2805,7 @@ class ElectrochemicalAnimation():
             AUC_index = 1
             AUC = 0
 
-            AUC_potentials = [abs(potential) for potential in adjusted_potentials]
+            AUC_potentials = adjusted_potentials
 
             #--- Find the minimum value and normalize it to 0 ---#
             AUC_min = min(adjusted_currents)
@@ -2862,7 +2831,7 @@ class ElectrochemicalAnimation():
         ### Return data to the animate function as 'args' ###
         #####################################################
 
-        return potentials, adjusted_potentials, smooth_currents, adjusted_currents, eval_regress, regression_potentials, linear_approx
+        return potentials, adjusted_potentials, smooth_currents, adjusted_currents, eval_regress
 
 
     def _animate(self, framedata, *args):
@@ -2870,7 +2839,7 @@ class ElectrochemicalAnimation():
         if key > 0:
             while True:
 
-                potentials, adjusted_potentials, smooth_currents, adjusted_currents, regression, regression_potentials, linear_fit = framedata
+                potentials, adjusted_potentials, smooth_currents, adjusted_currents, regression = framedata
 
                 print('\n%s%d: %dHz\n%s_animate' % (self.spacer,self.electrode,frequency_list[self.count],self.spacer))
 
@@ -2916,7 +2885,6 @@ class ElectrochemicalAnimation():
                     plots[1].set_data(adjusted_potentials, regression)
                     plots[2].set_data(Xaxis,data)                    # Raw Data
                     plots[4].set_data(Xaxis,NormalizedDataList)           # Norm Data
-                    plots[7].set_data(regression_potentials, linear_fit)
 
                 ##########################################################
                 ### If an Injection Point has been set, visualize the  ###
@@ -3094,7 +3062,6 @@ class DataNormalization():
                 Offset = (sample*LowFrequencySlope) + LowFrequencyOffset
             elif XaxisOptions == 'File Number':
                 Offset = (file*LowFrequencySlope) + LowFrequencyOffset
-            print('\n\nOffset =', Offset,'\n')
         else:
             Offset = 0
 
@@ -3170,9 +3137,10 @@ class DataNormalization():
 
                     normalized_data_list[num][count][:index] = [(idx/data_list[num][count][NormalizationIndex]) for idx in data_list[num][count][:index]]
 
-                    #############################################################
-                    ## If the frequency is below 50Hz, add the baseline Offset ##
-                    #############################################################
+                    ##################################################
+                    ## If the frequency is below cutoff_frequency, ###
+                    ## add the baseline Offset                     ###
+                    ##################################################
                     if frequency_list[count] == HighLowList['Low']:
                         for index in range(len(file_list)):
 
@@ -3188,7 +3156,6 @@ class DataNormalization():
                                 Offset = (file*LowFrequencySlope) + LowFrequencyOffset
 
                             offset_normalized_data_list[num][index] = normalized_data_list[num][count][index] + Offset
-
 
             ################################################
             ### Analyze KDM using new normalization data ###
@@ -3214,7 +3181,7 @@ class DataNormalization():
         ## greater than the new point, renormalize the data to the new point   ##
         #########################################################################
         if NormalizationWaiting:
-            index = file
+            index = file - 1
             NormalizationIndex = NormalizationPoint - 1
             for num in range(electrode_count):
                 for count in range(len(frequency_list)):
@@ -3222,11 +3189,11 @@ class DataNormalization():
                     ##########################
                     ## Renormalize the data ##
                     ##########################
-                    normalized_data_list[num][count][:index] = [idx/data_list[num][count][NormalizationIndex] for idx in data_list[num][count]]
-
-                    #############################################################
-                    ## If the frequency is below 50Hz, add the baseline Offset ##
-                    #############################################################
+                    normalized_data_list[num][count][:index] = [idx/data_list[num][count][NormalizationIndex] for idx in data_list[num][count][:index]]
+                    ##################################################
+                    ## If the frequency is below cutoff_frequency,  ##
+                    ## add the baseline Offset                      ##
+                    ##################################################
                     if frequency_list[count] == HighLowList['Low']:
                         for index in range(len(file_list)):
 
@@ -3274,7 +3241,7 @@ class DataNormalization():
         #-- Iterate through every frequency --#
         for frequency in frequency_list:
 
-            #-- Only apply the offset if the frequency is below 50 Hz --#
+            #-- Only apply the offset if the frequency is below cutoff_frequency --#
             if frequency == HighLowList['Low']:
                 count = frequency_dict[frequency]
 
@@ -3343,12 +3310,12 @@ class PostAnalysis(tk.Frame):
         self.completion_value = 0
 
         #--- Check for the presence of high and low frequencies ---#
-        if frequency_list[-1] > 50:
+        if frequency_list[-1] > cutoff_frequency:
             self.High = True
         else:
             self.High = False
 
-        if frequency_list[0] <= 50:
+        if frequency_list[0] <= cutoff_frequency:
             self.Low = True
         else:
             self.Low = False
@@ -3364,7 +3331,6 @@ class PostAnalysis(tk.Frame):
         ### Initialize the Frame and create its Widgets ###
         ###################################################
         tk.Frame.__init__(self, self.parent)             # initialize the frame
-
 
         self.Title = tk.Label(self, text = 'Post Analysis', font=HUGE_FONT).grid(row=0,column=0,columnspan=2)
 
@@ -3486,37 +3452,6 @@ class PostAnalysis(tk.Frame):
         self.columnconfigure(0, weight=1)
         self.columnconfigure(1, weight=1)
 
-    def DataExportTopLevel(self):
-
-        self.win = tk.Toplevel()
-        self.win.wm_title("Post Analysis Data Export")
-
-        self.ExportTopLevelExists = True
-
-        self.ElectrodeLabel = tk.Label(self.win, text='Select Electrodes:', font=LARGE_FONT)
-        self.ElectrodeLabel.grid(row=1,column=0, sticky = 'nswe')
-        self.ElectrodeCount = Listbox(self.win, relief='groove', exportselection=0, width=10, font=LARGE_FONT, height=6, selectmode = 'multiple', bd=3)
-        self.ElectrodeCount.bind('<<ListboxSelect>>',self.ElectrodeCurSelect)
-        self.ElectrodeCount.grid(row=2,column=0,padx=10,sticky='nswe')
-        for electrode in electrode_list:
-            self.ElectrodeCount.insert(END, electrode)
-
-        #--- ListBox containing the frequencies given on line 46 (InputFrequencies) ---#
-
-        self.FrequencyLabel = tk.Label(self.win, text='Select Frequencies', font= LARGE_FONT)
-        self.FrequencyLabel.grid(row=1,column=1,padx=10)
-        self.FrequencyList = Listbox(self.win, relief='groove', exportselection=0, width=5, font=LARGE_FONT, height = 5, selectmode='multiple', bd=3)
-        self.FrequencyList.bind('<<ListboxSelect>>',self.FrequencyCurSelect)
-        self.FrequencyList.grid(row=2,column=1,padx=10,sticky='nswe')
-        for frequency in frequency_list:
-            self.FrequencyList.insert(END, frequency)
-
-        ExportData = tk.Button(self.win, text = 'Export Data', command = lambda: self.PostAnalysisDataExport())
-        ExportData.grid(row=3,column=0,columnspan=2)
-
-        CloseButton = tk.Button(self.win, text = 'Close', command = lambda: self.win.destroy())
-        CloseButton.grid(row=4,column=0,columnspan=2,pady=10)
-
 
     def ElectrodeCurSelect(self, evt):
         ###################################################
@@ -3581,9 +3516,10 @@ class PostAnalysis(tk.Frame):
             for num in range(electrode_count):
                 for count in range(len(frequency_list)):
                     normalized_data_list[num][count] = [(idx/data_list[num][count][NormalizationIndex]) for idx in data_list[num][count]]
-                    #############################################################
-                    ## If the frequency is below 50Hz, add the baseline Offset ##
-                    #############################################################
+                    ##################################################
+                    ## If the frequency is below cutoff_frequency,  ##
+                    ## add the baseline Offset                      ##
+                    ##################################################
                     if frequency_list[count] == HighLowList['Low']:
                         for index in range(numFiles):
 
@@ -3600,8 +3536,7 @@ class PostAnalysis(tk.Frame):
 
                             offset_normalized_data_list[num][index] = normalized_data_list[num][count][index] + Offset
 
-        if RatioMetricCheck:
-            data_normalization.ResetRatiometricData()
+        data_normalization.ResetRatiometricData()
 
         self.NormWarning['fg'] = 'green'
         self.NormWarning['text'] = 'Normalized to File %d' % NormalizationPoint
@@ -3663,9 +3598,9 @@ class PostAnalysis(tk.Frame):
                 #####################
                 ## Set the Y Label ##
                 #####################
-                ax[0,0].set_ylabel('Current (µA)',fontweight='bold')
+                ax[0,0].set_ylabel('Current\n(µA)',fontweight='bold')
                 if SelectedOptions == 'Peak Height Extraction':
-                    ax[1,0].set_ylabel('Peak Height (µA)',fontweight='bold')
+                    ax[1,0].set_ylabel('Peak Height\n(µA)',fontweight='bold')
                 elif SelectedOptions == 'Area Under the Curve':
                     ax[1,0].set_ylabel('AUC (a.u.)',fontweight='bold')
                 ax[2,0].set_ylabel('Normalized', fontweight='bold')
@@ -3678,9 +3613,18 @@ class PostAnalysis(tk.Frame):
                     norm = [X*100 for X in normalized_ratiometric_data_list[num]]
                     KDM = [X*100 for X in KDM_list[num]]
 
+                    #-- Clear the Plots --#
                     ratio_ax[0,0].clear()
-                    ratio_ax[0,0].plot(Xaxis,norm,'ro',markersize=1)            # normalized ratio of high and low freq's
                     ratio_ax[0,1].clear()
+
+                    #-- Redraw the titles --#
+                    ratio_ax[0,0].set_title('Normalized Ratio')
+                    ratio_ax[0,1].set_title('KDM')
+                    ratio_ax[0,0].set_ylabel('% Signal', fontweight='bold')
+                    ratio_ax[0,1].set_ylabel('% Signal', fontweight='bold')
+
+                    #-- Plot the Data --#
+                    ratio_ax[0,0].plot(Xaxis,norm,'ro',markersize=1)            # normalized ratio of high and low freq'
                     ratio_ax[0,1].plot(Xaxis,KDM,'ro',markersize=1)
 
                 subplot_count += 1
@@ -3775,6 +3719,101 @@ class PostAnalysis(tk.Frame):
 
         if analysis_complete:
             post_analysis._adjust_data()
+
+
+    ######################################################
+    ### Data Export TopWindow and Associated Functions ###
+    ######################################################
+
+    def DataExportTopLevel(self):
+
+        self.win = tk.Toplevel()
+        self.win.wm_title("Post Analysis Data Export")
+
+        self.ExportTopLevelExists = True
+
+        ##############################################
+        ### Pack all of the widgets into the frame ###
+        ##############################################
+
+        #--- File Path ---#
+        self.SelectFilePath = ttk.Button(self.win, style = 'On.TButton', text = '%s' % DataFolder, command = lambda: self.FindFile(self.parent))
+        self.SelectFilePath.grid(row=0,column=0,columnspan=4)
+
+        self.NoSelectedPath = tk.Label(self, text = 'No File Path Selected', font = MEDIUM_FONT, fg = 'red')
+        self.PathWarningExists = False               # tracks the existence of a warning label
+
+        #--- File Handle Input ---#
+        HandleLabel = tk.Label(self.win, text='Exported File Handle:', font=LARGE_FONT)
+        HandleLabel.grid(row=4,column=0,columnspan=2)
+        self.filehandle = ttk.Entry(self.win)
+        self.filehandle.insert(END, )
+        self.filehandle.grid(row=5,column=0,columnspan=2,pady=5)
+
+        self.ElectrodeLabel = tk.Label(self.win, text='Select Electrodes:', font=LARGE_FONT)
+        self.ElectrodeLabel.grid(row=10,column=0, sticky = 'nswe')
+        self.ElectrodeCount = Listbox(self.win, relief='groove', exportselection=0, width=10, font=LARGE_FONT, height=6, selectmode = 'multiple', bd=3)
+        self.ElectrodeCount.bind('<<ListboxSelect>>',self.ElectrodeCurSelect)
+        self.ElectrodeCount.grid(row=11,column=0,padx=10,sticky='nswe')
+        for electrode in electrode_list:
+            self.ElectrodeCount.insert(END, electrode)
+
+        #--- ListBox containing the frequencies given on line 46 (InputFrequencies) ---#
+
+        self.FrequencyLabel = tk.Label(self.win, text='Select Frequencies', font= LARGE_FONT)
+        self.FrequencyLabel.grid(row=10,column=1,padx=10)
+        self.FrequencyList = Listbox(self.win, relief='groove', exportselection=0, width=5, font=LARGE_FONT, height = 5, selectmode='multiple', bd=3)
+        self.FrequencyList.bind('<<ListboxSelect>>',self.FrequencyCurSelect)
+        self.FrequencyList.grid(row=11,column=1,padx=10,sticky='nswe')
+        for frequency in frequency_list:
+            self.FrequencyList.insert(END, frequency)
+
+        ExportData = tk.Button(self.win, text = 'Export Data', command = lambda: self.PostAnalysisDataExport())
+        ExportData.grid(row=15,column=0,columnspan=2)
+
+        CloseButton = tk.Button(self.win, text = 'Close', command = lambda: self.win.destroy())
+        CloseButton.grid(row=16,column=0,columnspan=2,pady=10)
+
+
+    def FindFile(self, parent):
+        global FilePath, ExportPath, FoundFilePath, NoSelectedPath
+
+        try:
+
+            ### prompt the user to select a  ###
+            ### directory for  data analysis ###
+            FilePath = filedialog.askdirectory(parent = parent)
+            FilePath = ''.join(FilePath + '/')
+
+
+            ### Path for directory in which the    ###
+            ### exported .txt file will be placed  ###
+            ExportPath = FilePath.split('/')
+
+            #-- change the text of the find file button to the folder the user chose --#
+            DataFolder = '%s/%s' % (ExportPath[-3],ExportPath[-2])
+
+            self.SelectFilePath['style'] = 'On.TButton'
+            self.SelectFilePath['text'] = DataFolder
+
+
+            del ExportPath[-1]
+            del ExportPath[-1]
+            ExportPath = '/'.join(ExportPath)
+            ExportPath = ''.join(ExportPath + '/')
+
+            ## Indicates that the user has selected a File Path ###
+            FoundFilePath = True
+
+            if self.PathWarningExists:
+                self.NoSelectedPath['text'] = ''
+                self.NoSelectedPath.grid_forget()
+
+        except:
+            FoundFilePath = False
+            self.NoSelectedPath.grid(row=1,column=0,columnspan=4)
+            self.PathWarningExists = True
+
 
     def PostAnalysisDataExport(self):
 
@@ -3978,7 +4017,7 @@ class TextFileExport():
         else:
             self.frequency_list = frequencies
 
-        self.TextFileHandle = FileHandle
+        self.TextFileHandle = ExportFilePath
 
         TxtList = []
         TxtList.append('File')
@@ -4020,7 +4059,7 @@ class TextFileExport():
             TxtList.append('AvgKDM')
             TxtList.append('KDM_STD')
 
-        with open(FileHandle,'w+',encoding='utf-8', newline = '') as input:
+        with open(self.TextFileHandle,'w+',encoding='utf-8', newline = '') as input:
             writer = csv.writer(input, delimiter = ' ')
             writer.writerow(TxtList)
 
@@ -4069,7 +4108,6 @@ class TextFileExport():
             #-- calculate the average
             average = 0     # start at 0
             for item in NormalizedFrequencyCurrents:
-                print(item)
                 average += item            # add every item
             average = average/electrode_count
             AverageNorm = sum(NormalizedFrequencyCurrents)/electrode_count

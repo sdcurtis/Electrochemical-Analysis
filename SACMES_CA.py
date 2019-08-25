@@ -33,7 +33,7 @@ import matplotlib.ticker as mtick
 from matplotlib.patches import Polygon
 import matplotlib.animation as animation
 from matplotlib.animation import FuncAnimation
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2TkAgg
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import numpy as np
 import csv
 from pylab import *
@@ -518,6 +518,323 @@ class InitiateFigures():
 #---------------------------------------------------------------------------------------------------#
 
 
+    ##########################################################################
+    ##########################################################################
+    ###   ANIMATION FUNCTION TO HANDLE ALL DATA ANALYSIS AND VISUALIZATION ###
+    ##########################################################################
+    ##########################################################################
+
+
+class ElectrochemicalAnimation():
+    def __init__(self, fig, ax, generator = None, func = None, resize_interval = None, fargs = None):
+        global PoisonPill
+
+        print('ASDFASF')
+
+        self.file = 1                                            # Starting File
+        self.index = 1                                           # File Index Value
+        self.ax = ax                                             # Figure Axes object
+
+        ### Lists for sample rate (time passed)  ###
+        self.sample_list = []
+        self.file_list = []
+
+        #-- set the poison pill event for Reset --#
+        self.PoisonPill = Event()
+        PoisonPill = self.PoisonPill             # global reference
+
+
+        ##############################
+        ## Set the generator object ##
+        ##############################
+        if generator is not None:
+            self.generator = generator
+        else:
+            self.generator = self._raw_generator
+
+        ################################
+        ## Set the animation function ##
+        ################################
+        if func is not None:
+            self._func = func
+        else:
+            self._func = self._animate
+
+        if fargs:
+            self._args = fargs
+        else:
+            self._args = ()
+
+        self._fig = fig
+
+        # Disables blitting for backends that don't support it.  This
+        # allows users to request it if available, but still have a
+        # fallback that works if it is not.
+        self._blit = fig.canvas.supports_blit
+
+
+        # Instead of starting the event source now, we connect to the figure's
+        # draw_event, so that we only start once the figure has been drawn.
+        self._first_draw_id = fig.canvas.mpl_connect('draw_event', self._start)
+
+        # Connect to the figure's close_event so that we don't continue to
+        # fire events and try to draw to a deleted figure.
+        self._close_id = self._fig.canvas.mpl_connect('close_event', self._stop)
+
+        self._setup_blit()
+
+
+    def _start(self, *args):
+
+        # Starts interactive animation. Adds the draw frame command to the GUI
+        # andler, calls show to start the event loop.
+
+        print('START')
+        # First disconnect our draw event handler
+        self._fig.canvas.mpl_disconnect(self._first_draw_id)
+        self._first_draw_id = None  # So we can check on save
+
+        # Now do any initial draw
+        self._init_draw()
+
+        ### Create a thread to analyze obtain the file from a Queue
+        ### and analyze the data.
+
+        class _threaded_animation(threading.Thread):
+
+            def __init__(self, Queue):
+                print('THREADED INIT')
+                #global PoisonPill
+
+                threading.Thread.__init__(self)     # initiate the thread
+
+                self.q = Queue
+
+                #-- set the poison pill event for Reset --#
+                self.PoisonPill = Event()
+                PoisonPill = self.PoisonPill             # global reference
+
+                self.file = 1
+
+                root.after(10,self.start)                       # initiate the run() method
+
+            def run(self):
+
+                print('RUNNING')
+                while True:
+                    try:
+                        print('Getting Task')
+                        task = self.q.get(block=False)
+                        print('Got Task')
+
+                    except:
+                        break
+                    else:
+                        if not PoisonPill:
+                            print('Perorming Task')
+                            root.after(Interval,task)
+
+                if not PoisonPill:
+                    print('Running Again')
+                    root.after(10, self.run)
+
+        self.q = Queue()
+        threaded_animation = _threaded_animation(Queue = self.q)
+
+        self._step()
+
+
+    def _stop(self, *args):
+        # On stop we disconnect all of our events.
+        self._fig.canvas.mpl_disconnect(self._resize_id)
+        self._fig.canvas.mpl_disconnect(self._close_id)
+
+    def _setup_blit(self):
+        # Setting up the blit requires: a cache of the background for the
+        # axes
+        print('BLIT')
+        self._blit_cache = dict()
+        self._drawn_artists = []
+        self._resize_id = self._fig.canvas.mpl_connect('resize_event',
+                                                       self._handle_resize)
+        self._post_draw(True)
+
+    def _blit_clear(self, artists, bg_cache):
+        # Get a list of the axes that need clearing from the artists that
+        # have been drawn. Grab the appropriate saved background from the
+        # cache and restore.
+        axes = {a.axes for a in artists}
+        for a in axes:
+            if a in bg_cache:
+                a.figure.canvas.restore_region(bg_cache[a])
+
+
+    #######################################################################
+    ### Initialize the drawing by returning a sequence of blank artists ###
+    #######################################################################
+    def _init_draw(self):
+
+        self._drawn_artists = plots['EmptyPlots']
+        print(plots['EmptyPlots'])
+
+        for a in self._drawn_artists:
+            a.set_animated(self._blit)
+
+    def _handle_resize(self, *args):
+        # On resize, we need to disable the resize event handling so we don't
+        # get too many events. Also stop the animation events, so that
+        # we're paused. Reset the cache and re-init. Set up an event handler
+        # to catch once the draw has actually taken place.
+
+        #################################################
+        ### Stop the event source and clear the cache ###
+        #################################################
+        self._fig.canvas.mpl_disconnect(self._resize_id)
+        self._blit_cache.clear()
+        self._init_draw()
+        self._resize_id = self._fig.canvas.mpl_connect('draw_event',
+                                                       self._end_redraw)
+
+
+    def _end_redraw(self, evt):
+        # Now that the redraw has happened, do the post draw flushing and
+        # blit handling. Then re-enable all of the original events.
+        self._post_draw(False)
+        self._fig.canvas.mpl_disconnect(self._resize_id)
+        self._resize_id = self._fig.canvas.mpl_connect('resize_event',
+                                                       self._handle_resize)
+
+    def _draw_next_frame(self, framedata, fargs = None):
+        # Breaks down the drawing of the next frame into steps of pre- and
+        # post- draw, as well as the drawing of the frame itself.
+        self._pre_draw(framedata)
+        self._draw_frame(framedata, fargs)
+        self._post_draw(False)
+
+
+    def _pre_draw(self, framedata):
+        # Perform any cleaning or whatnot before the drawing of the frame.
+        # This default implementation allows blit to clear the frame.
+        self._blit_clear(self._drawn_artists, self._blit_cache)
+
+    ###########################################################################
+    ### Retrieve the data from _animation and blit the data onto the canvas ###
+    ###########################################################################
+    def _draw_frame(self, framedata, fargs):
+
+        self._drawn_artists = self._func(framedata, *self._args)
+
+        if self._drawn_artists is None:
+            raise RuntimeError('The animation function must return a '
+                               'sequence of Artist objects.')
+        self._drawn_artists = sorted(self._drawn_artists,
+                                     key=lambda x: x.get_zorder())
+
+        for a in self._drawn_artists:
+            a.set_animated(self._blit)
+
+
+    def _post_draw(self, redraw):
+        # After the frame is rendered, this handles the actual flushing of
+        # the draw, which can be a direct draw_idle() or make use of the
+        # blitting.
+        if redraw:
+            # Data plots #
+            self._fig.canvas.draw()
+
+        self._blit_draw(self._drawn_artists, self._blit_cache)
+
+
+    # The rest of the code in this class is to facilitate easy blitting
+    def _blit_draw(self, artists, bg_cache):
+        # Handles blitted drawing, which renders only the artists given instead
+        # of the entire figure.
+        updated_ax = []
+        print('BLIT DRAW')
+        try:
+            for a in artists:
+                # If we haven't cached the background for this axes object, do
+                # so now. This might not always be reliable, but it's an attempt
+                # to automate the process.
+                if a.axes not in bg_cache:
+                    bg_cache[a.axes] = a.figure.canvas.copy_from_bbox(a.axes.bbox)
+                a.axes.draw_artist(a)
+                updated_ax.append(a.axes)
+
+            # After rendering all the needed artists, blit each axes individually.
+            for ax in set(updated_ax):
+                ax.figure.canvas.blit(ax.bbox)
+        except:
+            print('BLIT FAIL')
+
+
+    ## callback that is called every 'interval' ms ##
+    def _step(self):
+
+        print('STEP')
+
+        if self.file not in self.file_list:
+            self.file_list.append(self.file)
+
+        #--- get the file handle ---#
+        short = 'Short_%s_#%d_#%d.DTA' % (handle_variable,self.file,self.index)
+        long = 'Long_%s_#%d_#%d.DTA' % (handle_variable,self.file,self.index)
+
+        short_file = mypath + short
+        long_file = mypath + long
+
+        print('SHORT %s' % short_file)
+        print('LONG %s' % long_file)
+
+        try:
+            mydata_bytes_short = os.path.getsize(short_file)    ### retrieves the size of the file in bytes
+            mydata_bytes_long = os.path.getsize(long_file)    ### retrieves the size of the file in bytes
+            print('Found FILES')
+            mydata_bytes = True
+
+        except:
+            mydata_bytes = False
+
+
+        #################################################################
+        #### If the file meets the size requirement, analyze the data ###
+        #################################################################
+        if mydata_bytes:
+            print('Putting task')
+            self.q.put(self.run_analysis())
+
+
+        else:
+            if not PoisonPill:
+                root.after(100,self._step)
+
+    def run_analysis(self):
+
+        print('Running Analysis')
+        try:
+            framedata = next(self.generator(file=self.file))
+            self._draw_next_frame(framedata)
+            self.file += 1
+            root.after(10,self._step)
+
+        except:
+            print('ERROR IN RUN ANALYSIS')
+
+    def _check_queue():
+
+        while True:
+            try:
+                print('%sChecking Queue' % self.spacer)
+                task = q.get(block=False)
+            except:
+                print('%sQueue Empty' % self.spacer)
+                break
+            else:
+                if not PoisonPill:
+                    root.after(1,self.task)
+
+        if not PoisonPill:
+            root.after(5, self._check_queue)
 
 
 #############################################
@@ -534,7 +851,7 @@ class ChronoamperometryAnalysis():
         #########################################
 
         anim = []
-        self.anim = ThreadedAnimation(figures['figure'], self.animate, generator=self.frames(), interval=Interval)
+        self.anim = ElectrochemicalAnimation(figures['figure'],figures['axes'], func=self.animate, generator=self.frames)
 
         anim.append(self.anim)
 
@@ -597,7 +914,7 @@ class ChronoamperometryAnalysis():
         plots['line'] = self.raw_decay        # global reference
         plots['curve fit'] = self.curve_fit
         plots['fitted lifetime'] = self.fitted_lifetime
-        plots['EmptyPlots'] = self.EmptyPlots
+        plots['EmptyPlots'] = [self.EmptyPlots]
 
     ### Analyze the first file and extrapolate parameters ###
     ### 1. voltage_1: 1st potential step (int; V)
@@ -706,7 +1023,13 @@ class ChronoamperometryAnalysis():
 
         A1, C1, K1, A2, C2, K2, adjusted_time, adjusted_currents = self.extract_parameters(time_data, current_data)
 
+        print(A1, C1, K1, A2, C2, K2)
+        print('Initial Constant value:',C2)
+
         popt, pcov = curve_fit(self.biexponential_func, adjusted_time, adjusted_currents, p0 = (A1, K1, A2, K2))
+
+        print(popt)
+        print(pcov)
 
         return popt, pcov, C2
 
@@ -757,6 +1080,7 @@ class ChronoamperometryAnalysis():
         ## linearize both sides  with the natural log and extrapolate K
         ## in exponential equation y = Ae^(-kt) + C
         initial_K = (math.log(initial_A) - math.log(closest_current - initial_C))/closest_time
+        print('\nMonoexponential Fit: Time Constant', initial_K)
 
         ### Separate the data into two zip files to ###
         ### fit to a biexponential function         ###
@@ -765,9 +1089,13 @@ class ChronoamperometryAnalysis():
 
         decay_1 = sorted(set(zip(adjusted_time[:half],adjusted_currents[:half])))
         decay_2 = sorted(set(zip(adjusted_time[half:],adjusted_currents[half:])))
+        print('\nDecay 1')
         A1, C1, K1 = self.extract_fit(decay_1)
+        print('\nDecay 2')
         A2, C2, K2 = self.extract_fit(decay_2)
 
+
+        print('extract parameters: returning values')
         return A1, C1, K1, A2, C2, K2, adjusted_time, adjusted_currents
         ### Get initial parameters for each decay ###
 
@@ -800,16 +1128,20 @@ class ChronoamperometryAnalysis():
 
             ### get the y value for the half-life
             half_life = 0.33*(float(A))
+            print('Initial Half Life:',half_life)
 
             ### find the closest real value to the theoretical half life
             closest_current = min(currents, key = lambda x:abs(x-half_life))
+            print('closest current:',closest_current)
             closest_time = dict[closest_current]
+            print('Closest Time:',closest_time)
 
             ## linearize both sides  with the natural log and extrapolate K
             ## in exponential equation y = Ae^(-kt) + C
             try:
                 K = (math.log(A) - math.log(closest_current - C))/closest_time
             except:
+                print('Constant > Closest Current')
                 K = (math.log(A) - math.log(closest_current))/closest_time
 
             print('\nExtract Fit: Time Constant', K)
@@ -837,25 +1169,25 @@ class ChronoamperometryAnalysis():
     ###############################################
     ### Generator Function for data acquisition ###
     ###############################################
-    def frames(self):
-        global file_label, plots, ThreadQueue
+    def frames(self, file = None):
+        global file_label, plots
 
-        while True:
-            while self.file <= self.file_limit:
+        if file is None:
+            self.file = 1
+        else:
+            self.file = file
 
-                self.file = ThreadQueue.get()
+        print('File Recieved from Queue: %s' % str(self.file))
 
-                print('File Recieved from Queue: %s' % str(self.file))
+        #try:
+        file_label['text'] = str(self.file)
 
-                #try:
-                file_label['text'] = str(self.file)
+        ## Yield a list containing data
+        ## avergaed over 'point_limit' number of
+        ## chronoamperomegrams
+        averaged_data = self.data_analysis()
 
-                ## Yield a list containing data
-                ## avergaed over 'point_limit' number of
-                ## chronoamperomegrams
-                yield self.data_analysis()
-            #except:
-                    #print('\n\nChronoamperometryAnalysis.frames: Unable to yield data_analysis\n\n')
+        yield averaged_data
 
 
     def data_analysis(self):
@@ -1113,6 +1445,8 @@ class ChronoamperometryAnalysis():
 
         # Get the time constant, lambda, with (1/k) from y = A * e^(-kt) + C
         fitted_lifetime = (1/popt[1])*1000                  # popt[1] = k
+        print('animate..\n k=',popt[1])
+        print('lifetime = ',fitted_lifetime)
         self.fitted_lifetime_list.append(fitted_lifetime)
 
         # set the chronoamperogram
@@ -1140,172 +1474,11 @@ class ChronoamperometryAnalysis():
         ### return artists to be animated
         return self.raw_decay, self.curve_fit, self.fitted_lifetime
 
-        #except:
-        #    print('\n\nError in animate\n\n')
-
-
 
     def merge_two_dicts(self, x, y):            # any keys that overlap will be overridden with the items from y
         z = x.copy()   # start with x's keys and values
         z.update(y)    # modifies z with y's keys and values & returns None
         return z
-
-
-
-
-#---------------------------------------------------------------------------------------------------#
-#---------------------------------------------------------------------------------------------------#
-
-#---------------------------------------------------------------------------------------------------#
-#---------------------------------------------------------------------------------------------------#
-
-
-
-#################################################################
-### Threaded animation class subclassing the animaiton module ###
-#################################################################
-class ThreadedAnimation(FuncAnimation):
-    def __init__(self, fig, func, generator=None, interval=None):
-
-        #-- this class will create parallel worker threads for separate animations,
-        #-- improving the efficiency of the animation. Before, separate animations
-        #-- would have to be run sequentially with multiple calls to FuncAnimation
-
-        self.fig = fig
-        self.func = func
-        self.generator = generator
-        self.interval = interval
-        self.point_limit = point_limit
-
-        #- Initialize FuncAnimation, which will subsequently initialize the
-        #- animation module.
-        FuncAnimation.__init__(self, self.fig, self.func, frames=self.generator, init_func = lambda: self.init(), interval=self.interval, blit=True)
-
-    ##########################################################################
-    ### Override the Animation._start method as to change the event source ###
-    ### callback to a parallel thread as to increase performanace between  ###
-    ### the UI and data visualization                                      ###
-    ##########################################################################
-
-    def init(self):
-        #-- return an empty artist for the initial draw --#
-        return plots['EmptyPlots'],
-
-    def _start(self, *args):
-        global event_source
-
-        # Starts interactive animation. Adds the draw frame command to the GUI
-        # handler, calls show to start the event loop.
-
-        # First disconnect our draw event handler
-        self._fig.canvas.mpl_disconnect(self._first_draw_id)
-        self._first_draw_id = None  # So we can check on save
-
-        # Now do any initial draw
-        self._init_draw()
-
-
-        #####################################################################################
-        ### Thread class that will create a new thread instance as an event source that   ###
-        ### spawns worker threads for data analysis. Multiple threads can carry out tasks ###
-        ### from the queue at once, allowing for multiple worker threads to analyze and   ###
-        ### animate separate artists simultaneously                                       ###
-        #####################################################################################
-        class _thread(threading.Thread):
-            def __init__(self, callback=None):
-                global ThreadQueue, PoisonPill
-
-                threading.Thread.__init__(self)     # initiate the thread
-
-                #-- set the poison pill event for Reset --#
-                self.PoisonPill = Event()
-                PoisonPill = self.PoisonPill             # global reference
-
-                self.exp_low = exp_low
-                self.exp_high = exp_high
-
-                self.file = 1
-                self.callback = callback
-                self.q = Queue(maxsize=1)           # only allow a single worker to be placed on the queue at once
-                ThreadQueue = self.q                      # global reference
-
-                self.start()                        # initiate the run() method
-
-            def run(self):
-
-                ### continuously loop through workers, which will exit on their own ###
-                while True:
-                    if self.PoisonPill.isSet():
-                        break
-
-                    elif self.file > file_limit:
-                        break
-
-                    else:
-                        try:
-
-                            try:
-                                if not ParameterPipe.empty():
-                                    args = ParameterPipe.get()
-                                    self.exp_low, self.exp_high = args
-                                    print('\nRetrieved Parameters from the Pipe!\n')
-                            except:
-                                print('\n           Could not retrieve parameters from Queue\n\n')
-
-                            print('\n_thread starting file %s\n' % str(self.file))
-                            #########################################################
-                            ### Place the next file to be analyzed into the queue ###
-                            #########################################################
-                            self.q.put(self.file)
-
-                            ##########################################################
-                            ### Could implement ability to animate multiple plots  ###
-                            ### here using multiple threads instead of one         ###
-                            ##########################################################
-                            self.step_thread = Thread(target = self.callback).start()           # the callback is the _step method
-
-                            #########################################################################
-                            ### blocking call to wait until _step has finished analyzing the data ###
-                            #########################################################################
-                            self.q.join()   # blocks until the task_done() call is made at the end of _step
-
-                            #-- Move onto the next file --#
-                            self.file += 1
-
-                        except:
-                            print('\nError in _thread\n')
-                            t.sleep(1)
-
-                print('\nPoison Pill activated. Exiting Thread %s\n' % threading.current_thread())
-                self.join()
-
-        ############################################
-        ### Inititiate the Threaded Event Source ###
-        ############################################
-        event_source = _thread(callback=self._step)
-
-    ### Override of the animation.Animation() method to incorporate
-    def _step(self):
-        global ThreadQueue
-
-        try:
-            #--- retrieve the data from the generator function, frames() ---#
-            framedata = next(self.frame_seq)
-
-            #--- blit the data ---#
-            self._draw_next_frame(framedata, self._blit)
-
-            ############################################################
-            ### Call task_done() to indicate _threads to continue    ###
-            ###     - task_done() tells the queue.Queue object that  ###
-            ###       all of the tasks within it are complete        ###
-            ###     - this alleviates the lock created by q.join()   ###
-            ############################################################
-            ThreadQueue.task_done()
-
-        except StopIteration:
-            print('stop iteration')
-
 
 
 
