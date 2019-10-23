@@ -70,7 +70,7 @@ PHE_method = 'Abs'      # default PHE Extraction is difference between absolute 
 
 #------------------------------------------------------------#
 
-InputFrequencies = [30,80,240]  # frequencies initially displayed in Frequency Listbox
+InputFrequencies = [10,20,30,40,50,60,70,80,90,100,125,150,175,200,225,250,275,300,325,350,375,400,425,450,475,500,550,600,650,700,750,800,850,900,950,1000]  # frequencies initially displayed in Frequency Listbox
 
 #---------------------------------------------------------------------------------------------------#
 #---------------------------------------------------------------------------------------------------#
@@ -130,18 +130,22 @@ SMALL_FONT = ('Verdana', 8)
 ##############################
 def _retrieve_file(file, electrode, frequency):
 
-    if e_var == 'single':
-        filename = '%s%dHz_.txt' % (handle_variable, frequency)
-        filename2 = '%s%dHz_%d.txt' % (handle_variable, frequency, file)
-        filename3 = '%s%dHz__%d.txt' % (handle_variable, frequency, file)
+    try:
+        if e_var == 'single':
+            filename = '%s%dHz_.txt' % (handle_variable, frequency)
+            filename2 = '%s%dHz_%d.txt' % (handle_variable, frequency, file)
+            filename3 = '%s%dHz__%d.txt' % (handle_variable, frequency, file)
 
 
-    elif e_var == 'multiple':
-        filename = 'E%s_%s%sHz_.txt' % (electrode,handle_variable,frequency)
-        filename2 = 'E%s_%s%sHz_%d.txt' % (electrode,handle_variable,frequency,file)
-        filename3 = 'E%s_%s%sHz__%d.txt' % (electrode,handle_variable,frequency,file)
+        elif e_var == 'multiple':
+            filename = 'E%s_%s%sHz_.txt' % (electrode,handle_variable,frequency)
+            filename2 = 'E%s_%s%sHz_%d.txt' % (electrode,handle_variable,frequency,file)
+            filename3 = 'E%s_%s%sHz__%d.txt' % (electrode,handle_variable,frequency,file)
 
-    return filename, filename2, filename3
+        return filename, filename2, filename3
+
+    except:
+        print('\nError in _retrieve_file\n')
 
 
 
@@ -220,6 +224,19 @@ def ReadData(myfile, electrode):
     #######################
     return potentials, currents, data_dict
 
+#######################################
+### Retrieve the column index value ###
+#######################################
+def _get_listval(electrode):
+
+    if e_var == 'single':
+        list_val = electrode
+
+    elif e_var == 'multiple':
+        list_val = 1
+
+    return list_val
+
 
 #---------------------------------------------------------------------------------------------------#
 #---------------------------------------------------------------------------------------------------#
@@ -238,7 +255,7 @@ class MainWindow(tk.Tk):
 
     #--- Initialize the GUI ---#
     def __init__(self,master=None,*args, **kwargs):
-        global container, Plot, frame_list, PlotValues, ShowFrames, HighLowList
+        global container, Plot, frame_list, PlotValues, ShowFrames
 
 
         #tk.Tk.__init__(self, *args, **kwargs)
@@ -702,11 +719,17 @@ class InputFrame(tk.Frame):
 
     #--- Electrode Selection ---#
     def ElectrodeCurSelect(self, evt):
-        global electrode_count, electrode_list, frame_list, PlotValues
+        global electrode_count, electrode_list, electrode_dict
 
         electrode_list = [self.ElectrodeCount.get(idx) for idx in self.ElectrodeCount.curselection()]
         electrode_list = [int(electrode) for electrode in electrode_list]
         electrode_count = len(electrode_list)
+
+        index = 0
+        electrode_dict = {}
+        for electrode in electrode_list:
+            electrode_dict[electrode] = index
+            index += 1
 
         if electrode_count is 0:
             self.ElectrodeListExists = False
@@ -808,12 +831,66 @@ class InputFrame(tk.Frame):
         if not self.PathWarningExists:
             if not self.NoSelection:
                 if self.FrequencyListExists:
-                    self.StartProgram()
+                    initialize = self.InitializeSetup()
 
 
 
                 else:
                     print('Could Not Start Program')
+
+    def InitializeSetup(self):
+        global FileHandle, text_file_export, starting_file, handle_variable, Interval, SaveVar, numFiles, q, delimiter, max_data,min_data,min_raw,max_raw
+
+        #---Get the User Input and make it globally accessible---#
+
+        q = Queue()
+
+        ### Set the delimiter value for data columns ###
+        if delimiter == 1:
+            delimiter = ' '
+        elif delimiter == 2:
+            delimiter = '   '
+
+        starting_file = 1
+
+        SaveVar = self.SaveVar.get()                        # tracks if text file export has been activated
+        handle_variable = self.ImportFileEntry.get()        # string handle used for the input file
+        numFiles = int(self.numfiles.get())
+
+
+        min_raw = float(self.raw_data_min.get())            # raw data y limit adjustment variables
+        max_raw = float(self.raw_data_max.get())
+        min_data = float(self.data_min.get())            # raw data y limit adjustment variables
+        max_data = float(self.data_max.get())
+
+        #############################################################
+        ### Interval at which the program searches for files (ms) ###
+        #############################################################
+        Interval = self.Interval.get()
+
+        #################################
+        ### Initiate .txt File Export ###
+        #################################
+
+        #--- If the user has indicated that text file export should be activated ---#
+        if SaveVar:
+            print('Initializing Text File Export')
+            text_file_export = True
+
+        else:
+            text_file_export = None
+            print('Text File Export Deactivated')
+
+        ## set the resizeability of the container ##
+        ## frame to handle PlotContainer resize   ##
+        container.columnconfigure(1, weight=1)
+
+        ################################################################
+        ### If all checkpoints have been met, initialize the program ###
+        ################################################################
+        if FoundFilePath:
+            checkpoint = CheckPoint(self.parent, self.controller)
+
 
 #---------------------------------------------------------------------------------------------------------------------------#
 #---------------------------------------------------------------------------------------------------------------------------#
@@ -838,27 +915,30 @@ class CheckPoint():
         self.win.attributes('-topmost', 'true')
         self.controller = controller
 
-        row_value = 1
-        self.frame_dict = {}
+        row_value = 0
+        column_value = 0
+
         self.label_dict = {}
         self.already_verified = {}
+
+        self.electrode_frame = tk.Frame(self.win)
+        self.electrode_frame.grid(row=1,column=0,columnspan=2)
+
         for electrode in electrode_list:
-            electrode_label = tk.Label(self.win, text = 'E%s' % electrode,font=LARGE_FONT).grid(row=row_value,column=0,pady=5,padx=5)
-            frame = tk.Frame(self.win, relief='groove',bd=5)
-            frame.grid(row = row_value,column=1,pady=5,padx=5)
-            self.frame_dict[electrode] = frame
-            self.label_dict[electrode] = {}
-            self.already_verified[electrode] = {}
-            row_value += 1
 
-            column_value = 0
-            for frequency in frequency_list:
-                label = tk.Label(frame, text = '%sHz' % str(frequency), fg = 'red')
-                label.grid(row=0,column=column_value,padx=5,pady=5)
-                self.label_dict[electrode][frequency] = label
-                self.already_verified[electrode][frequency] = False
-                column_value += 1
 
+            electrode_label = tk.Label(self.electrode_frame, text = 'E%s' % electrode,font=HUGE_FONT)
+            electrode_label.grid(row=row_value,column=column_value,pady=5,padx=5)
+            self.label_dict[electrode] = electrode_label
+            self.already_verified[electrode] = False
+
+            if column_value == 1:
+                column_value = 0
+                row_value += 1
+            else:
+                column_value = 1
+
+        row_value += 1
 
         self.stop = tk.Button(self.win, text = 'Stop', command = self.stop)
         self.stop.grid(row=row_value, column=0,columnspan=2,pady=5)
@@ -867,7 +947,6 @@ class CheckPoint():
         self.num = 0
         self.count = 0
         self.analysis_count = 0
-        self.analysis_limit = electrode_count * len(frequency_list)
         self.electrode_limit = electrode_count - 1
         self.frequency_limit = len(frequency_list) - 1
 
@@ -877,37 +956,37 @@ class CheckPoint():
 
         self.electrode = electrode_list[self.num]
 
-        for frequency in frequency_list:
+        frequency = frequency_list[0]
 
-            filename, filename2, filename3 = _retrieve_file(1,self.electrode,frequency)
+        filename, filename2, filename3 = _retrieve_file(1,self.electrode,frequency)
 
-            myfile = mypath + filename               ### path of your file
-            myfile2 = mypath + filename2               ### path of your file
-            myfile3 = mypath + filename3               ### path of your file
+        myfile = mypath + filename               ### path of your file
+        myfile2 = mypath + filename2               ### path of your file
+        myfile3 = mypath + filename3               ### path of your file
 
+        try:
+            mydata_bytes = os.path.getsize(myfile)    ### retrieves the size of the file in bytes
+
+        except:
             try:
-                mydata_bytes = os.path.getsize(myfile)    ### retrieves the size of the file in bytes
-
+                mydata_bytes = os.path.getsize(myfile2)    ### retrieves the size of the file in bytes
+                myfile = myfile2
             except:
                 try:
-                    mydata_bytes = os.path.getsize(myfile2)    ### retrieves the size of the file in bytes
-                    myfile = myfile2
+                    mydata_bytes = os.path.getsize(myfile3)    ### retrieves the size of the file in bytes
+                    myfile = myfile3
                 except:
-                    try:
-                        mydata_bytes = os.path.getsize(myfile3)    ### retrieves the size of the file in bytes
-                        myfile = myfile3
-                    except:
-                        mydata_bytes = 1
+                    mydata_bytes = 1
 
-            if mydata_bytes > 1000:
-                if not self.already_verified[self.electrode][frequency]:
-                    self.already_verified[self.electrode][frequency] = True
-                    if not self.StopSearch:
-                        self.label_dict[self.electrode][frequency]['fg'] = 'green'
-                        self.analysis_count += 1
+        if mydata_bytes > 1000:
+            if not self.already_verified[self.electrode]:
+                self.already_verified[self.electrode] = True
+                if not self.StopSearch:
+                    self.label_dict[self.electrode]['fg'] = 'green'
+                    self.analysis_count += 1
 
-                if self.analysis_count == self.analysis_limit:
-                    root.after(10,self.proceed)
+            if self.analysis_count == electrode_count:
+                root.after(10,self.proceed)
 
 
         if self.num < self.electrode_limit:
@@ -915,7 +994,7 @@ class CheckPoint():
         else:
             self.num = 0
 
-        if self.analysis_count < self.analysis_limit:
+        if self.analysis_count < electrode_count:
             if not self.StopSearch:
                 root.after(10,self.verify)
 
@@ -966,6 +1045,373 @@ class CheckPoint():
 
         frame = ShowFrames[cont]
         frame.tkraise()
+
+
+
+                                        #############################################################
+                                        #############################################################
+                                        ### Creation of Matplotlib Canvas, Figures, Axes, Artists ###
+                                        ### and all other decorators (e.g. axis labels, titles)   ###
+                                        #############################################################
+                                        #############################################################
+
+
+class InitializeFigureCanvas():
+    def __init__(self):
+        global text_file_export, SaveVar, file_list, electrode_count, anim, Frame, FrameReference, FileHandle, PlotContainer,frequency_list, data_list, plot_list, EmptyPlots, figures, frame_list, Plot, PlotFrames, PlotValues
+
+        ##############################################
+        ### Generate global lists for data storage ###
+        ##############################################
+
+        self.length = len(frequency_list)
+        electrode_count = int(electrode_count)
+
+        #--- Animation list ---#
+        anim = []
+
+        #--- file list ---#
+        file_list = [0]*numFiles
+
+        #--- Figure lists ---#
+        figures = []
+
+        ############################################
+        ### Create global lists for data storage ###
+        ############################################
+        data_list = [0]*electrode_count                             # Peak Height/AUC data (after smoothing and polynomial regression)
+
+        for num in range(electrode_count):
+            data_list[num] = [0]*self.length                        # a data list for each eletrode
+            for count in range(self.length):                        # a data list for each frequency for that electrode
+                data_list[num][count] = [0]*numFiles
+
+
+        #--- Lists of Frames and Artists ---#
+        plot_list = []
+        frame_list = []
+
+        ######################################################
+        ### Create a figure and artists for each electrode ###
+        ######################################################
+        for num in range(electrode_count):
+            electrode = electrode_list[num]
+            figure = self.MakeFigure(electrode)
+            figures.append(figure)
+
+
+        #####################################################
+        ### Create a frame for each electrode and embed   ###
+        ### within it the figure containing its artists   ###
+        #####################################################
+
+        PlotFrames = {}                # Dictionary of frames for each electrode
+        PlotValues = []                # create a list of frames
+
+        #--- Create a container that can be created and destroyed when Start() or Reset() is called, respectively ---#
+        PlotContainer = tk.Frame(container, relief = 'groove', bd = 3)
+        PlotContainer.grid(row=0,column=1, sticky = 'nsew')
+        PlotContainer.rowconfigure(0, weight=1)
+        PlotContainer.columnconfigure(0, weight=1)
+
+        frame_count = 0
+        for electrode_frame in frame_list:                # Iterate through the frame of each electrode
+
+            #--- create an instance of the frame and append it to the global frame dictionary ---#
+            FrameReference = VisualizationFrame(electrode_frame, frame_count, PlotContainer, self)            # PlotContainer is the 'parent' frame
+            FrameReference.grid(row=0,column=0,sticky='nsew')      # sticky must be 'nsew' so it expands and contracts with resize
+            PlotFrames[electrode_frame] = FrameReference
+
+            frame_count += 1
+
+        #--- Create a list containing the Frame objects for each electrode ---#
+        for reference, frame in PlotFrames.items():
+            PlotValues.append(frame)
+
+
+        #################################
+        ### Initiate .txt File Export ###
+        #################################
+
+        #--- If the user has indicated that text file export should be activated ---#
+        if SaveVar:
+            print('Initializing Text File Export')
+            text_file_export = TextFileExport()
+
+        else:
+            text_file_export = None
+            print('Text File Export Deactivated')
+
+
+
+    ############################################
+    ### Create the figure and artist objects ###
+    ############################################
+    def MakeFigure(self, electrode):
+        global EmptyPlots, plot_list, frame_list
+
+        #try:
+        print('a')
+        ##########################################
+        ### Setup the Figure for voltammograms ###
+        ##########################################
+        fig, ax = plt.subplots(nrows=2,ncols=1,squeeze=False,figsize=(9,4.5))    ## figsize=(width, height)
+        plt.subplots_adjust(bottom=0.2,hspace=0.6,wspace=0.3)         ### adjust the spacing between subplots
+        print('b')
+        #---Set the electrode index value---#
+        if e_var == 'single':
+            list_val = (electrode*3)
+        elif e_var == 'multiple':
+            list_val = 3
+        print('c')
+        #######################
+        ### Set axis labels ###
+        #######################
+        ax[0,0].set_ylabel('Current (µA)',fontweight='bold')
+        ax[0,0].set_xlabel('Voltage (V)',fontweight='bold')
+
+        ax[1,0].set_ylabel('Charge (uC)',fontweight='bold')
+        ax[1,0].set_xlabel('Frequency (Hz)',fontweight='bold')
+        print('d')
+        ##########################################
+        ### Set suplot axes for each frequency ###
+        ##########################################
+        electrode_plot = []
+
+        max_frequency = frequency_list[-1]
+        ax[1,0].set_xscale('log')
+        print('e')
+        #################################################################################
+        #################################################################################
+        ###       Analyze the first file and create the Y limits of the subplots      ###
+        ###               depending on the data range of the first file               ###
+        #################################################################################
+
+        self.InitializeSubplots(ax, electrode)
+
+        #################################################################################
+        #################################################################################
+
+        print('e')
+        #---Initiate the subplots---#
+        # this assigns a Line2D artist object to the artist object (Axes)
+        smooth, = ax[0,0].plot([],[],'ko',Markersize=2)
+        regress, = ax[0,0].plot([],[],'r-')
+        charge, = ax[1,0].plot([],[],'ko',MarkerSize=1)
+
+        #--- shading for AUC ---#
+        verts = [(0,0),*zip([],[]),(0,0)]
+        poly = Polygon(verts, alpha = 0.5)
+        ax[0,0].add_patch(poly)
+
+        print('d')
+        #####################################################
+        ### Create a list of the primitive artists        ###
+        ### (Line2D objects) that will be returned        ###
+        ### to ElectrochemicalAnimation to be visualized  ###
+        #####################################################
+
+        # this is the list that will be returned as _drawn_artists to the Funcanimation class
+        plots = [smooth,regress,charge,poly]
+
+        #--- And append that list to keep a global reference ---#
+        electrode_plot.append(plots)        # 'plots' is a list of artists that are passed to animate
+        electrode_frame = 'Electrode %s' % str(electrode)
+        if electrode_frame not in frame_list:
+            frame_list.append(electrode_frame)
+
+        #--- Create empty plots to return to animate for initializing---#
+        EmptyPlots = [smooth,regress,charge]
+
+        plot_list.append(plots)        # 'plot_list' is a list of lists containing 'plots' for each electrode
+
+        #-- Return both the figure and the axes to be stored as global variables --#
+        return fig, ax
+
+
+    #    except:
+    #        print('Error in MakeFigure')
+
+
+    #####################################################################################
+    ### Initalize Y Limits of each figure depending on the y values of the first file ###
+    #####################################################################################
+    def InitializeSubplots(self,ax,electrode):
+
+        self.list_val = _get_listval(electrode)
+
+        try:
+            print('Initialize: Electrode %s' % str(electrode))
+            frequency = frequency_list[0]
+            filename, filename2, filename3 = _retrieve_file(1,electrode,frequency)
+
+            myfile = mypath + filename               ### path of your file
+            myfile2 = mypath + filename2               ### path of your file
+            myfile3 = mypath + filename3               ### path of your file
+
+            try:
+                mydata_bytes = os.path.getsize(myfile)    ### retrieves the size of the file in bytes
+
+            except:
+                try:
+                    mydata_bytes = os.path.getsize(myfile2)    ### retrieves the size of the file in bytes
+                    myfile = myfile2
+                except:
+                    try:
+                        mydata_bytes = os.path.getsize(myfile3)    ### retrieves the size of the file in bytes
+                        myfile = myfile3
+                    except:
+                        mydata_bytes = 1
+
+
+            if mydata_bytes > 1000:
+                print('Found File %s' % myfile)
+                self.RunInitialization(myfile,ax,electrode)
+
+            else:
+                return False
+
+
+        except:
+            print('could not find file for electrode %d' % electrode)
+            #--- If search time has not met the search limit keep searching ---#
+            root.after(1000, self.InitializeSubplots, ax, electrode)
+
+
+    def RunInitialization(self, myfile, ax, electrode):
+        global high_xstart, high_xend, low_xstart, low_xend
+
+        try:
+            avalue = 0
+            #########################
+            ### Retrieve the data ###
+            #########################
+            potentials, currents, data_dict = ReadData(myfile, electrode)
+
+            ##########################################
+            ### Set the x axes of the voltammogram ###
+            ##########################################
+            MIN_POTENTIAL = min(potentials)
+            MAX_POTENTIAL = max(potentials)
+
+            #-- Reverse voltammogram to match the 'Texas' convention --#
+            ax[0,0].set_xlim(MAX_POTENTIAL,MIN_POTENTIAL)
+
+            #######################################
+            ### Get the high and low potentials ###
+            #######################################
+
+            #-- set the local variables to the global ---#
+            xstart = max(potentials)
+            xend = min(potentials)
+
+            low_xstart = xstart
+            high_xstart = xstart
+            low_xend = xend
+            high_xend = xend
+
+            cut_value = 0
+            for value in potentials:
+                if value == 0:
+                    cut_value += 1
+
+
+            if cut_value > 0:
+                potentials = potentials[:-cut_value]
+                currents = currents[:-cut_value]
+
+            adjusted_potentials = [value for value in potentials if xend <= value <= xstart]
+
+            #########################################
+            ### Savitzky-Golay smoothing          ###
+            #########################################
+            smooth_currents = savgol_filter(currents, 15, sg_degree)
+            data_dict = dict(zip(potentials,smooth_currents))
+
+            #######################################
+            ### adjust the smooth currents to   ###
+            ### match the adjusted potentials   ###
+            #######################################
+            adjusted_currents = []
+            for potential in adjusted_potentials:
+                adjusted_currents.append(data_dict[potential])
+
+            ######################
+            ### Polynomial fit ###
+            ######################
+            polynomial_coeffs = np.polyfit(adjusted_potentials,adjusted_currents,polyfit_deg)
+            eval_regress = np.polyval(polynomial_coeffs,adjusted_potentials).tolist()
+            regression_dict = dict(zip(eval_regress, adjusted_potentials))      # dictionary with current: potential
+
+            fit_half = round(len(eval_regress)/2)
+            min1 = min(eval_regress[:-fit_half])
+            min2 = min(eval_regress[fit_half:])
+            max1 = max(eval_regress[:-fit_half])
+            max2 = max(eval_regress[fit_half:])
+
+            linear_fit = np.polyfit([regression_dict[min1],regression_dict[min2]],[min1,min2],1)
+            linear_regression = polyval(linear_fit,[regression_dict[min1],regression_dict[min2]]).tolist()
+
+            Peak_Height = max(max1,max2)-min(min1,min2)
+
+
+            if SelectedOptions == 'Area Under the Curve':
+                AUC_index = 1
+                AUC = 0
+
+                AUC_potentials = [abs(potential) for potential in adjusted_potentials]
+                AUC_min = min(adjusted_currents)
+                AUC_currents = [Y - AUC_min for Y in adjusted_currents]
+
+                while AUC_index <= len(AUC_currents) - 1:
+                    AUC_height = (AUC_currents[AUC_index] + AUC_currents[AUC_index - 1])/2
+                    AUC_width = AUC_potentials[AUC_index] - AUC_potentials[AUC_index - 1]
+                    AUC += (AUC_height * AUC_width)
+                    AUC_index += 1
+
+            #--- calculate the baseline current ---#
+            minimum_current = min(min1,min2)
+            maximum_current = max(max1,max2)
+            peak_current = maximum_current - minimum_current
+
+            ## Reverse voltammogram to match the 'Texas' convention ##
+            ax[0,0].set_xlim(MAX_POTENTIAL,MIN_POTENTIAL)
+
+            ## set the limits of the lovric plot ##
+            ax[1,0].set_ylim(0,max_data*.05)
+            ax[1,0].set_xlim(int(frequency_list[0]),int(frequency_list[-1]))
+
+            if SelectedOptions == 'Peak Height Extraction':
+                ax[0,0].set_ylim(min_raw*minimum_current,10*max_raw*max(max1,max2))         # voltammogram
+
+            elif SelectedOptions == 'Area Under the Curve':
+                ax[0,0].set_ylim(0,max_raw*max(max1,max2))
+
+
+            return True
+
+        except:
+            print('\n\nError in RunInitialization\n\n')
+
+
+
+
+                #############################################################
+                #############################################################
+                ###              END OF INITIATION FUNCTIONS              ###
+                #############################################################
+                #############################################################
+
+
+
+
+
+#---------------------------------------------------------------------------------------------------------------------------#
+#---------------------------------------------------------------------------------------------------------------------------#
+
+
+#---------------------------------------------------------------------------------------------------------------------------#
+#---------------------------------------------------------------------------------------------------------------------------#
 
 
 #---------------------------------------------------------------------------------------------------------------------------#
@@ -1325,377 +1771,6 @@ class VisualizationFrame(tk.Frame):
 #---------------------------------------------------------------------------------------------------------------------------#
 
 
-
-
-                                        #############################################################
-                                        #############################################################
-                                        ### Creation of Matplotlib Canvas, Figures, Axes, Artists ###
-                                        ### and all other decorators (e.g. axis labels, titles)   ###
-                                        #############################################################
-                                        #############################################################
-
-
-class InitializeFigureCanvas():
-    def __init__(self):
-        global text_file_export, file_list, electrode_count, anim, Frame, FrameReference, FileHandle, PlotContainer,frequency_list, data_list, plot_list, EmptyPlots, figures, frame_list, Plot, PlotFrames, PlotValues
-
-        ##############################################
-        ### Generate global lists for data storage ###
-        ##############################################
-
-        self.length = len(frequency_list)
-        electrode_count = int(electrode_count)
-
-        #--- Animation list ---#
-        anim = []
-
-        #--- file list ---#
-        file_list = [0]*numFiles
-
-        #--- Figure lists ---#
-        figures = []
-
-        ############################################
-        ### Create global lists for data storage ###
-        ############################################
-        data_list = [0]*electrode_count                             # Peak Height/AUC data (after smoothing and polynomial regression)
-
-        for num in range(electrode_count):
-            data_list[num] = [0]*self.length                        # a data list for each eletrode
-            for count in range(self.length):                        # a data list for each frequency for that electrode
-                data_list[num][count] = [0]*numFiles
-
-
-        #--- Lists of Frames and Artists ---#
-        plot_list = []
-        frame_list = []
-
-        ######################################################
-        ### Create a figure and artists for each electrode ###
-        ######################################################
-        for num in range(electrode_count):
-            electrode = electrode_list[num]
-            figure = self.MakeFigure(electrode)
-            figures.append(figure)
-
-
-        #####################################################
-        ### Create a frame for each electrode and embed   ###
-        ### within it the figure containing its artists   ###
-        #####################################################
-
-        PlotFrames = {}                # Dictionary of frames for each electrode
-        PlotValues = []                # create a list of frames
-
-        #--- Create a container that can be created and destroyed when Start() or Reset() is called, respectively ---#
-        PlotContainer = tk.Frame(container, relief = 'groove', bd = 3)
-        PlotContainer.grid(row=0,column=1, sticky = 'nsew')
-        PlotContainer.rowconfigure(0, weight=1)
-        PlotContainer.columnconfigure(0, weight=1)
-
-        frame_count = 0
-        for electrode_frame in frame_list:                # Iterate through the frame of each electrode
-
-            #--- create an instance of the frame and append it to the global frame dictionary ---#
-            FrameReference = VisualizationFrame(electrode_frame, frame_count, PlotContainer, self)            # PlotContainer is the 'parent' frame
-            FrameReference.grid(row=0,column=0,sticky='nsew')      # sticky must be 'nsew' so it expands and contracts with resize
-            PlotFrames[electrode_frame] = FrameReference
-
-            frame_count += 1
-
-        #--- Create a list containing the Frame objects for each electrode ---#
-        for reference, frame in PlotFrames.items():
-            PlotValues.append(frame)
-
-
-        #################################
-        ### Initiate .txt File Export ###
-        #################################
-
-        #--- If the user has indicated that text file export should be activated ---#
-        if SaveVar:
-            print('Initializing Text File Export')
-            text_file_export = TextFileExport()
-
-        else:
-            text_file_export = None
-            print('Text File Export Deactivated')
-
-
-
-    ############################################
-    ### Create the figure and artist objects ###
-    ############################################
-    def MakeFigure(self, electrode):
-        global EmptyPlots, plot_list, frame_list
-
-        try:
-            ##########################################
-            ### Setup the Figure for voltammograms ###
-            ##########################################
-            fig, ax = plt.subplots(nrows=2,ncols=1,squeeze=False,figsize=(9,4.5))    ## figsize=(width, height)
-            plt.subplots_adjust(bottom=0.2,hspace=0.6,wspace=0.3)         ### adjust the spacing between subplots
-
-            #---Set the electrode index value---#
-            if e_var == 'single':
-                list_val = (electrode*3)
-            elif e_var == 'multiple':
-                list_val = 3
-
-            #######################
-            ### Set axis labels ###
-            #######################
-            ax[0,0].set_ylabel('Current (µA)',fontweight='bold')
-            ax[0,0].set_xlabel('Voltage (V)',fontweight='bold')
-
-            ax[1,0].set_ylabel('Charge (uC)',fontweight='bold')
-            ax[1,0].set_xlabel('Frequency (Hz)',fontweight='bold')
-
-            ##########################################
-            ### Set suplot axes for each frequency ###
-            ##########################################
-            electrode_plot = []
-
-            max_frequency = frequency_list[-1]
-            ax[1,0].set_xscale('log')
-
-            #################################################################################
-            #################################################################################
-            ###       Analyze the first file and create the Y limits of the subplots      ###
-            ###               depending on the data range of the first file               ###
-            #################################################################################
-            self.InitializeSubplots(ax, electrode)
-
-            #################################################################################
-            #################################################################################
-
-
-            #---Initiate the subplots---#
-            # this assigns a Line2D artist object to the artist object (Axes)
-            smooth, = ax[0,0].plot([],[],'ko',Markersize=2)
-            regress, = ax[0,0].plot([],[],'r-')
-            charge, = ax[1,0].plot([],[],'ko',MarkerSize=1)
-
-            #--- shading for AUC ---#
-            verts = [(0,0),*zip([],[]),(0,0)]
-            poly = Polygon(verts, alpha = 0.5)
-            ax[0,0].add_patch(poly)
-
-
-            #####################################################
-            ### Create a list of the primitive artists        ###
-            ### (Line2D objects) that will be returned        ###
-            ### to ElectrochemicalAnimation to be visualized  ###
-            #####################################################
-
-            # this is the list that will be returned as _drawn_artists to the Funcanimation class
-            plots = [smooth,regress,charge,poly]
-
-            #--- And append that list to keep a global reference ---#
-            electrode_plot.append(plots)        # 'plots' is a list of artists that are passed to animate
-            electrode_frame = 'Electrode %s' % str(electrode)
-            if electrode_frame not in frame_list:
-                frame_list.append(electrode_frame)
-
-            #--- Create empty plots to return to animate for initializing---#
-            EmptyPlots = [smooth,regress,charge]
-
-            plot_list.append(plots)        # 'plot_list' is a list of lists containing 'plots' for each electrode
-
-            #-- Return both the figure and the axes to be stored as global variables --#
-            return fig, ax
-
-
-        except:
-            print('Error in MakeFigure')
-
-
-    #####################################################################################
-    ### Initalize Y Limits of each figure depending on the y values of the first file ###
-    #####################################################################################
-    def InitializeSubplots(self,ax,freq,electrode,subplot_count):
-
-        if e_var == 'single':
-            self.list_val = (electrode*3) + column_index            # default 'column index' is -2
-
-        elif e_var == 'multiple':
-            self.list_val = column_index + 3
-
-        freq = int(freq)
-
-        try:
-
-            filename, filename2, filename3 = _retrieve_file(1,self.electrode,frequency)
-
-            myfile = mypath + filename               ### path of your file
-            myfile2 = mypath + filename2               ### path of your file
-            myfile3 = mypath + filename3               ### path of your file
-
-            try:
-                mydata_bytes = os.path.getsize(myfile)    ### retrieves the size of the file in bytes
-
-            except:
-                try:
-                    mydata_bytes = os.path.getsize(myfile2)    ### retrieves the size of the file in bytes
-                    myfile = myfile2
-                except:
-                    try:
-                        mydata_bytes = os.path.getsize(myfile3)    ### retrieves the size of the file in bytes
-                        myfile = myfile3
-                    except:
-                        mydata_bytes = 1
-
-            if mydata_bytes > 1000:
-                print('Found File %s' % myfile)
-                self.RunInitialization(myfile,ax,subplot_count, electrode, freq)
-
-            else:
-                return False
-
-
-        except:
-            print('could not find file for electrode %d' % electrode)
-            #--- If search time has not met the search limit keep searching ---#
-            root.after(1000, self.InitializeSubplots, ax, freq, electrode, subplot_count)
-
-
-    def RunInitialization(self, myfile, ax, subplot_count, electrode, freq):
-        global high_xstart, high_xend, low_xstart, low_xend
-
-        try:
-            #########################
-            ### Retrieve the data ###
-            #########################
-            potentials, currents, data_dict = ReadData(myfile, electrode)
-
-            ##########################################
-            ### Set the x axes of the voltammogram ###
-            ##########################################
-            MIN_POTENTIAL = min(potentials)
-            MAX_POTENTIAL = max(potentials)
-
-            #-- Reverse voltammogram to match the 'Texas' convention --#
-            ax[0,subplot_count].set_xlim(MAX_POTENTIAL,MIN_POTENTIAL)
-
-
-            #######################################
-            ### Get the high and low potentials ###
-            #######################################
-
-            if int(freq) > cutoff_frequency:
-
-                if not HighAlreadyReset:
-                    high_xstart = max(potentials)
-                    high_xend = min(potentials)
-
-                #-- set the local variables to the global ---#
-                xend = high_xend
-                xstart = high_xstart
-
-            elif int(freq) <= cutoff_frequency:
-
-                if not LowAlreadyReset:
-                    low_xstart = max(potentials)
-                    low_xend = min(potentials)
-
-                #-- set the local variables to the global ---#
-                xstart = low_xstart
-                xend = low_xend
-
-
-            cut_value = 0
-            for value in potentials:
-                if value == 0:
-                    cut_value += 1
-
-
-            if cut_value > 0:
-                potentials = potentials[:-cut_value]
-                currents = currents[:-cut_value]
-
-            adjusted_potentials = [value for value in potentials if xend <= value <= xstart]
-
-            #########################################
-            ### Savitzky-Golay smoothing          ###
-            #########################################
-            smooth_currents = savgol_filter(currents, 15, sg_degree)
-            data_dict = dict(zip(potentials,smooth_currents))
-
-            #######################################
-            ### adjust the smooth currents to   ###
-            ### match the adjusted potentials   ###
-            #######################################
-            adjusted_currents = []
-            for potential in adjusted_potentials:
-                adjusted_currents.append(data_dict[potential])
-
-            ######################
-            ### Polynomial fit ###
-            ######################
-            polynomial_coeffs = np.polyfit(adjusted_potentials,adjusted_currents,polyfit_deg)
-            eval_regress = np.polyval(polynomial_coeffs,adjusted_potentials).tolist()
-            regression_dict = dict(zip(eval_regress, adjusted_potentials))      # dictionary with current: potential
-
-            fit_half = round(len(eval_regress)/2)
-            min1 = min(eval_regress[:-fit_half])
-            min2 = min(eval_regress[fit_half:])
-            max1 = max(eval_regress[:-fit_half])
-            max2 = max(eval_regress[fit_half:])
-
-            linear_fit = np.polyfit([regression_dict[min1],regression_dict[min2]],[min1,min2],1)
-            linear_regression = polyval(linear_fit,[regression_dict[min1],regression_dict[min2]]).tolist()
-
-            Peak_Height = max(max1,max2)-min(min1,min2)
-
-
-            if SelectedOptions == 'Area Under the Curve':
-                AUC_index = 1
-                AUC = 0
-
-                AUC_potentials = [abs(potential) for potential in adjusted_potentials]
-                AUC_min = min(adjusted_currents)
-                AUC_currents = [Y - AUC_min for Y in adjusted_currents]
-
-                while AUC_index <= len(AUC_currents) - 1:
-                    AUC_height = (AUC_currents[AUC_index] + AUC_currents[AUC_index - 1])/2
-                    AUC_width = AUC_potentials[AUC_index] - AUC_potentials[AUC_index - 1]
-                    AUC += (AUC_height * AUC_width)
-                    AUC_index += 1
-
-            #--- calculate the baseline current ---#
-            minimum_current = min(min1,min2)
-            maximum_current = max(max1,max2)
-            peak_current = maximum_current - minimum_current
-
-            ## Reverse voltammogram to match the 'Texas' convention ##
-            ax[0,0].set_xlim(MAX_POTENTIAL,MIN_POTENTIAL)
-
-            ## set the limits of the lovric plot ##
-            ax[1,0].set_ylim(0,max_data*.05)
-            ax[1,0].set_xlim(int(frequency_list[0]),int(frequency_list[-1]))
-
-            if SelectedOptions == 'Peak Height Extraction':
-                ax[0,0].set_ylim(min_raw*minimum_current,10*max_raw*max(max1,max2))         # voltammogram
-
-            elif SelectedOptions == 'Area Under the Curve':
-                ax[0,0].set_ylim(0,max_raw*max(max1,max2))
-
-
-            return True
-
-        except:
-            print('\n\nError in RunInitialization\n\n')
-
-
-
-                                #############################################################
-                                #############################################################
-                                ###              END OF INITIATION FUNCTIONS              ###
-                                #############################################################
-                                #############################################################
-
-
-
 #---------------------------------------------------------------------------------------------------------------------------#
 #---------------------------------------------------------------------------------------------------------------------------#
 
@@ -1758,6 +1833,8 @@ class ElectrochemicalAnimation():
 
         if resize_interval is not None:
             self.resize_interval = resize_interval
+        else:
+            self.resize_interval = None
 
         self.resize_limit = self.resize_interval        # set the first limit
 
@@ -1968,10 +2045,6 @@ class ElectrochemicalAnimation():
     def _step(self):
         global file_list, sample_list, analysis_complete
 
-        if self.file not in self.file_list:
-            self.file_list.append(self.file)
-            self.sample_list.append((len(self.file_list)*SampleRate)/3600)
-
         ### look for the file here ###
         frequency = int(frequency_list[self.count])
 
@@ -2033,6 +2106,7 @@ class ElectrochemicalAnimation():
         try:
             framedata = self.generator(myfile, frequency)
             self._draw_next_frame(framedata)
+            track.tracking(self.file,frequency)
 
         except StopIteration:
             return False
@@ -2076,7 +2150,7 @@ class ElectrochemicalAnimation():
         ##################################################################
         if self.count == self.frequency_limit:
 
-            track.tracking(self.file)
+
 
             #########################################################################
             ### If the function has analyzed the final final, remove the callback ###
@@ -2363,21 +2437,14 @@ class Track():
 
         self.track_list = [1]*numFiles
 
-    def tracking(self, file):
+    def tracking(self, file, frequency):
 
         index = file - 1
 
         if self.track_list[index] == electrode_count:
 
-            ### Global File List
-            _update_global_lists(file)
-
-            HighFrequency = HighLowList['High']
-            LowFrequency = HighLowList['Low']
-
-
             if SaveVar:
-                text_file_export.RealTimeExport(file)
+                text_file_export.ExportData(file,frequency)
 
 
             self.track_list[index] = 1
@@ -2447,9 +2514,9 @@ class TextFileExport():
             TxtList.append('Charge_E%d(uC)' % (E_count))
             E_count += 1
 
-        TxtList.append('Average')
+        TxtList.append('Avg.PeakHeight(uA)')
         TxtList.append('Standard_Deviation')
-        TxtList.append('Charge(uC)')
+        TxtList.append('Avg.Charge(uC)')
 
         with open(FileHandle,'w+',encoding='utf-8', newline = '') as input:
             writer = csv.writer(input, delimiter = ' ')
@@ -2458,7 +2525,7 @@ class TextFileExport():
     #################################################################
     ### Write the data from the current file into the Export File ###
     #################################################################
-    def ExportData(self, frequency, file):
+    def ExportData(self, file,frequency):
 
         list = []
         index = file - 1
@@ -2510,20 +2577,6 @@ class TextFileExport():
         except:
             print('\n\n','ERROR IN TEXT FILE EXPORT','\n\n')
             time.sleep(3)
-
-
-def _update_global_lists(file):
-    global file_list, sample_list
-
-    if file not in file_list:
-        file_list.append(file)
-
-        sample = round(len(file_list)*SampleRate/3600,3)
-        sample_list.append(sample)
-        RealTimeSampleLabel['text'] = sample
-
-        if file != numFiles:
-            FileLabel['text'] = file + 1
 
 
 #---------------------------------------------------------------------------------------------------#
