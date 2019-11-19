@@ -3698,6 +3698,9 @@ class ElectrochemicalAnimation():
             root.after(1, self._step)
 
 
+    ### Need to remove self variables from file, count, num,
+    ### to make the script more modular
+
     def _raw_generator(self, myfile, frequency):
 
         ########################################
