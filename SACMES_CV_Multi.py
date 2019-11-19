@@ -52,9 +52,10 @@ import threading
 from threading import Thread
 from queue import Queue
 import multiprocessing
+from multiprocessing import Process
 
-print(multiprocessing.cpu_count())
-print(os.cpu_count())
+#print(multiprocessing.cpu_count())
+#print(os.cpu_count())
 
 
 style.use('ggplot')
@@ -570,7 +571,7 @@ class InputFrame(tk.Frame):                         # first frame that is displa
         self.QuitButton.grid(row=18,column=0,columnspan=2,pady=10,padx=10)
 
         #--- Button to Initialize Data Analysis --#
-        StartButton = ttk.Button(self, width=9, text='Initialize', command = lambda: self.CheckPoint())
+        StartButton = ttk.Button(self, width=9, text='Initialize', command = lambda: self.InputFrameCheckpoint())
         StartButton.grid(row=18,column=2,columnspan=2, pady=10, padx=10)
 
         for row in range(18):
@@ -685,7 +686,7 @@ class InputFrame(tk.Frame):                         # first frame that is displa
     ### Electrodes, Frequencies, Analysis Method, and File Path. If   ###
     ### they have, initialize the program                             ###
     #####################################################################
-    def CheckPoint(self):
+    def InputFrameCheckpoint(self):
         global mypath, Option, SelectedOptions, FileHandle, AlreadyInitiated, delimeter
 
         try:
@@ -729,7 +730,7 @@ class InputFrame(tk.Frame):                         # first frame that is displa
 
         if not self.PathWarningExists:
             if not self.NoSelection:
-                self.StartProgram()
+                self.InitializeSetup()
 
         else:
             print('Could Not Start Program')
@@ -739,7 +740,7 @@ class InputFrame(tk.Frame):                         # first frame that is displa
     ### Function To Initialize Data Acquisition, Analysis, and Animation ###
     ########################################################################
 
-    def StartProgram(self):
+    def InitializeSetup(self):
         global FileHandle, text_file_export, starting_file, scan_rate, handle_variable, track, Interval, e_var, resize_interval, CV_min, CV_max, data_min, data_max, mypath, electrode_count, SaveVar, track, numFiles, frames, generate, figures, Plot, frame_list, PlotValues, anim, q, delimiter
 
         #---Get the User Input and make it globally accessible---#
@@ -787,15 +788,15 @@ class InputFrame(tk.Frame):                         # first frame that is displa
         ### If all checkpoints have been met, initialize the program ###
         ################################################################
         if FoundFilePath:
-            checkpoint = CheckPoint(self.parent, self.controller)
+            checkpoint = Verification(self.parent, self.controller)
 
 #---------------------------------------------------------------------------------------------------------------------------#
 #---------------------------------------------------------------------------------------------------------------------------#
 
-####################################
-### Checkpoint TopLevel Instance ###
-####################################
-class CheckPoint():
+######################################
+### Verification TopLevel Instance ###
+######################################
+class Verification():
     def __init__(self, parent, controller):
 
         #-- Check to see if the user's settings are accurate
@@ -1205,14 +1206,14 @@ class SetupFrame(tk.Frame):
         #####################################
         ### Initialize Real Time Analysis ###
         #####################################
-        self.Start = tk.Button(self, text='Start', font=LARGE_FONT, width=7, command = lambda: self.Checkpoint())
+        self.Start = tk.Button(self, text='Start', font=LARGE_FONT, width=7, command = lambda: self.SetupFrameCheckpoint())
         self.Start.grid(row=10,column=1,pady=5,padx=5)
 
         self._create_toolbar()
 
     #--- Function to visualize different frames ---#
     def _create_toolbar(self):
-        global forward_boolean,reverse_boolean,analysis_boolean,potential_boolean,probe_boolean,menubar
+        global forward_boolean,reverse_boolean,analysis_boolean,potential_boolean,menubar
 
         self.menubar = tk.Menu(self)
         menubar = self.menubar
@@ -1369,6 +1370,10 @@ class SetupFrame(tk.Frame):
         low_voltage = float(self.LowVoltage.get())
         high_voltage = float(self.HighVoltage.get())
 
+        print('\n\nMinimum Voltage:',low_voltage)
+        print('Maximum Voltage:',high_voltage,'\n\n')
+
+
         if self.ForwardsSelectionExists:
             self.ForwardsSelection(None)
 
@@ -1480,6 +1485,7 @@ class SetupFrame(tk.Frame):
 
     def blit_data(self, artists):
 
+        print('Blit')
         axes = {a.axes for a in artists}
         for a in axes:
             if a in self.bg_cache:
@@ -1523,7 +1529,7 @@ class SetupFrame(tk.Frame):
         self.AlterExportPathButton['style'] = 'On.TButton'
         self.AlterExportPathButton['text'] = DataFolder
 
-    def Checkpoint(self):
+    def SetupFrameCheckpoint(self):
         global probe1_boolean, probe2_boolean
 
         passkey = True
@@ -1648,7 +1654,6 @@ class SetupFrame(tk.Frame):
         frame = RealTimeManipulationFrame(analysis_container)
         ShowFrames[RealTimeManipulationFrame] = frame
         frame.grid(row=0,column=0,padx=5,ipadx=5,sticky='nswe')
-    #   frame.tkraise()
 
         for frame in PlotValues:
             frame.grid(row=0,column=0,sticky='nsew')      # sticky must be 'nsew' so it expands and contracts with resize
@@ -2080,8 +2085,15 @@ class InitializeFigureCanvas():
                 #-- Split the voltammogram before and after the peak  --#
                 #-- potential and extract the maxima for each besides --#
                 try:
-                    vertex1 = min(self.adjusted_currents[:self.peak_index])
-                    vertex2 = min(self.adjusted_currents[self.peak_index:])
+                    if self.peak_index > 0:
+                        vertex1 = min(self.adjusted_currents[:self.peak_index])
+                    else:
+                        vertex1 = self.adjusted_currents[0]
+
+                    if self.peak_index == len(self.adjusted_currents) - 1:
+                        vertex2 = self.adjusted_currents[-1]
+                    else:
+                        vertex2 = min(self.adjusted_currents[self.peak_index:])
                 except:
                     fit_half = int(len(self.adjusted_currents)/2)
                     vertex1 = min(self.adjusted_currents[:fit_half])
@@ -2091,8 +2103,15 @@ class InitializeFigureCanvas():
                 #-- Split the voltammogram before and after the peak  --#
                 #-- potential and extract the maxima for each besides --#
                 try:
-                    vertex1 = max(self.adjusted_currents[:self.peak_index])
-                    vertex2 = max(self.adjusted_currents[self.peak_index:])
+                    if self.peak_index > 0:
+                        vertex1 = max(self.adjusted_currents[:self.peak_index])
+                    else:
+                        vertex1 = self.adjusted_currents[0]
+
+                    if self.peak_index == len(self.adjusted_currents) - 1:
+                        vertex2 = self.adjusted_currents[-1]
+                    else:
+                        vertex2 = max(self.adjusted_currents[self.peak_index:])
                 except:
                     fit_half = int(len(self.adjusted_currents)/2)
                     vertex1 = max(self.adjusted_currents[:fit_half])
@@ -2116,8 +2135,12 @@ class InitializeFigureCanvas():
         else:
             list = []
             for vertex in vertex_potential:
-                if min(vertex_potentials) <= vertex <= max(vertex_potentials):
+                if len(vertex_potentials) == 1:
+                    if vertex == vertex_potentials[0]:
+                        list.append(vertex)
+                elif min(vertex_potentials) <= vertex <= max(vertex_potentials):
                     list.append(vertex)
+
 
             vertex_potential = list[0]
             index = self.potential_dict[vertex_potential] - self.adjusted_index_list[0] # and the index value
@@ -2305,7 +2328,9 @@ class InitializeFigureCanvas():
         ### Peak Potential Plots ###
         ############################
         if self.potential_boolean:
+            ### if forward segment has been selected ###
             if self.forward_boolean:
+                ### if forward and reverse segments have been selected ###
                 if self.reverse_boolean:
                     self.forward_plot = fig.add_subplot(ax[1,0])
                     self.reverse_plot = fig.add_subplot(ax[1,1])
@@ -2314,7 +2339,7 @@ class InitializeFigureCanvas():
 
                     self.reverse_plot.set_title('Reverse Peak Potential')
                     self.reverse_plot.set_xlabel('File Number')   # Reverse Peak Potential Plot
-                    self.reverse_plot.set_ylabel('Current/µA')    # Reverse Peak Potential Plot
+                    self.reverse_plot.set_ylabel('Potential/mV')    # Reverse Peak Potential Plot
 
                     #-- Peak Potential Forwards and Reverse --#
                     self.reverse_plot.set_xlim(-0.05,xlim_factor+0.1)
@@ -2323,7 +2348,7 @@ class InitializeFigureCanvas():
                     peak_reverse, = self.reverse_plot.plot([],[],'ro',MarkerSize=1)
                     plots['peak reverse'] = peak_reverse
 
-
+                ### if only forward segment was selected ###
                 else:
                     self.forward_plot = fig.add_subplot(ax[1,:])
 
@@ -2331,14 +2356,14 @@ class InitializeFigureCanvas():
                 figures[num]['forward plot'] = forward_plot
                 self.forward_plot.set_title('Forward Peak Potential')
                 self.forward_plot.set_xlabel('File Number')   # Forwards Peak Potential Plot
-                self.forward_plot.set_ylabel('Current/µA')    # Forwards Peak Potential Plot
+                self.forward_plot.set_ylabel('Potential/mV')    # Forwards Peak Potential Plot
                 self.forward_plot.set_xlim(-0.05,xlim_factor+0.1)
 
                 #-- Forward Line2D Artist --#
                 peak_forward, = self.forward_plot.plot([],[],'go',MarkerSize=1)
                 plots['peak forward'] = peak_forward
 
-
+            ### If only reverse segment has been selected ###
             else:
                 if self.reverse_boolean:
                     self.reverse_plot = fig.add_subplot(ax[1,:])
@@ -2347,7 +2372,7 @@ class InitializeFigureCanvas():
 
                     self.reverse_plot.set_title('Reverse Peak Potential')
                     self.reverse_plot.set_xlabel('File Number')   # Reverse Peak Potential Plot
-                    self.reverse_plot.set_ylabel('Current/µA')    # Reverse Peak Potential Plot
+                    self.reverse_plot.set_ylabel('Potential/mV')    # Reverse Peak Potential Plot
                     self.reverse_plot.set_xlim(-0.05,xlim_factor+0.1)
 
                     #-- Reverse Line2D Artist --#
@@ -2664,8 +2689,15 @@ class InitializeFigureCanvas():
                 ###############################################################
                 try:
                     #-- Split the potentials before and after the peak potential --#
-                    vertex1_potentials = self.adjusted_potentials[:self.peak_index]
-                    vertex2_potentials = self.adjusted_potentials[self.peak_index:]
+                    if self.peak_index > 0:
+                        vertex1_potentials = self.adjusted_potentials[:self.peak_index]
+                    else:
+                        vertex1_potentials = [self.adjusted_potentials[0]]
+
+                    if self.peak_index == len(self.adjusted_currents) - 1:
+                        vertex2_potentials = [self.adjusted_potentials[-1]]
+                    else:
+                        vertex2_potentials = self.adjusted_potentials[self.peak_index:]
 
                     #-- Find the potentials that correspond to the vertex currents
                     vertex1_potential = self.data_dict[vertex1]        # extract the associated potential
@@ -2968,6 +3000,7 @@ class ElectrochemicalAnimation():
     def __init__(self, fig, ax, electrode, generator = None, func = None, resize_interval = None, fargs = None):
 
         self.electrode = electrode                               # Electrode for this class instance
+        print('ElectrochemicalAnimation %s' % self.electrode)
         self.num = electrode_dict[self.electrode]                # Electrode index value
         self.spacer = ''.join(['       ']*self.electrode)        # Spacer value for print statements
         self.list_val = _get_listval(electrode)
@@ -3048,12 +3081,13 @@ class ElectrochemicalAnimation():
         ### Create a thread to analyze obtain the file from a Queue
         ### and analyze the data.
 
-        class _threaded_animation(threading.Thread):
+        class _threaded_animation(multiprocessing.Process):
 
             def __init__(self, Queue):
                 #global PoisonPill
+                print('1')
 
-                threading.Thread.__init__(self)     # initiate the thread
+                multiprocessing.Process.__init__(self)     # initiate the thread
 
                 self.q = Queue
 
@@ -3066,20 +3100,24 @@ class ElectrochemicalAnimation():
                 root.after(10,self.start)                       # initiate the run() method
 
             def run(self):
-
+                print("2")
                 while True:
                     try:
                         task = self.q.get(block=False)
-
+                        print('3')
                     except:
                         break
                     else:
                         if not PoisonPill:
-                            root.after(Interval,task)
+                            print('4')
+                            print(task)
+                            task()
+                            #root.after(Interval,task)
 
                 if not analysis_complete:
                     if not PoisonPill:
-                        root.after(10, self.run)
+                        print('running again')
+                        self.run()
 
 
         threaded_animation = _threaded_animation(Queue = q)
@@ -3175,6 +3213,7 @@ class ElectrochemicalAnimation():
     def _draw_next_frame(self, framedata, fargs = None):
         # Breaks down the drawing of the next frame into steps of pre- and
         # post- draw, as well as the drawing of the frame itself.
+        print('draw next frame')
         self._pre_draw(framedata)
         self._draw_frame(framedata, fargs)
         self._post_draw(False)
@@ -3189,6 +3228,7 @@ class ElectrochemicalAnimation():
     ### Retrieve the data from _animation and blit the data onto the canvas ###
     ###########################################################################
     def _draw_frame(self, framedata, fargs):
+        print('draw frame')
 
         self._drawn_artists = self._func(framedata, *self._args)
 
@@ -3203,6 +3243,7 @@ class ElectrochemicalAnimation():
 
 
     def _post_draw(self, redraw):
+        print('post draw')
         # After the frame is rendered, this handles the actual flushing of
         # the draw, which can be a direct draw_idle() or make use of the
         # blitting.
@@ -3220,6 +3261,7 @@ class ElectrochemicalAnimation():
 
     # The rest of the code in this class is to facilitate easy blitting
     def _blit_draw(self, artists, bg_cache):
+        print('Blit Draw')
         # Handles blitted drawing, which renders only the artists given instead
         # of the entire figure.
         updated_ax = []
@@ -3234,13 +3276,18 @@ class ElectrochemicalAnimation():
 
         # After rendering all the needed artists, blit each axes individually.
         for ax in set(updated_ax):
+            print('blitting...')
             ax.figure.canvas.blit(ax.bbox)
+
+        print('next...')
+        self._next_iteration()
 
 
     ## callback that is called every 'interval' ms ##
     def _step(self):
         global file_list, analysis_complete
 
+        print('step')
         if self.file not in self.file_list:
             self.file_list.append(self.file)
 
@@ -3293,16 +3340,19 @@ class ElectrochemicalAnimation():
     def _run_analysis(self,myfile):
         global post_analysis
 
+        print('_run_analysis %d' % self.electrode)
         #######################################################
         ### Perform the next iteration of the data analysis ###
         #######################################################
         try:
             framedata = self.generator(myfile)
             self._draw_next_frame(framedata)
-
+            print('5')
         except StopIteration:
             return False
 
+    def _next_iteration(self):
+        print('_next_iteration')
         ##########################################################################
         ### if the resize limit has been reached, resize and redraw the figure ###
         ##########################################################################
@@ -3342,7 +3392,7 @@ class ElectrochemicalAnimation():
             self.file += 1
             self.index += 1
             print('%smoving onto file %s\n' % (self.spacer,str(self.file)))
-            root.after(1, self._step)
+            self._step()
 
 
     def _raw_generator(self, myfile):
@@ -3405,6 +3455,11 @@ class ElectrochemicalAnimation():
             self.adjusted_potentials = [potential for potential in self.segment_potentials if low_voltage <= potential <= high_voltage]
             self.adjusted_index_list = [self.potential_dict[potential] for potential in self.adjusted_potentials]
             self.adjusted_currents = [currents[index] for index in self.adjusted_index_list]
+            self.adjusted_data_dict = {}
+            self.adjusted_index_list = {}
+            for index in range(len(self.adjusted_potentials)):
+                 self.adjusted_data_dict.setdefault(self.adjusted_currents[index],[]).append(self.adjusted_potentials[index])
+                 self.adjusted_index_list[self.adjusted_potentials[index]] = index
             adjusted_segment_data[count] = [self.adjusted_potentials,self.adjusted_currents]
 
             ################################################
@@ -3459,8 +3514,15 @@ class ElectrochemicalAnimation():
 
                 try:
                     #-- Split the potentials before and after the peak potential --#
-                    vertex1_potentials = self.adjusted_potentials[:self.peak_index]
-                    vertex2_potentials = self.adjusted_potentials[self.peak_index:]
+                    if self.peak_index > 0:
+                        vertex1_potentials = self.adjusted_potentials[:self.peak_index]
+                    else:
+                        vertex1_potentials = [self.adjusted_potentials[0]]
+
+                    if self.peak_index == len(self.adjusted_currents) - 1:
+                        vertex2_potentials = [self.adjusted_potentials[-1]]
+                    else:
+                        vertex2_potentials = self.adjusted_potentials[self.peak_index:]
 
                     #-- Find the potentials that correspond to the vertex currents
                     vertex1_potential = self.data_dict[vertex1]        # extract the associated potential
@@ -3493,11 +3555,13 @@ class ElectrochemicalAnimation():
                     print('\n%s_raw_generator: Error in Baseline Value Adjustment\n'% self.spacer)
 
 
-                ################################
-                ### Create a linear baseline ###
-                ################################
+            ############################################################
+            ### Create a linear baseline based on the mass transport ###
+            ############################################################
 
-                #-- if it is a surface bound species --#
+                #############################
+                ### SURFACE BOUND SPECIES ###
+                #############################
                 if mass_transport == 'surface':
                     try:
                         proto_baseline = np.linspace(vertex1,vertex2,len(baseline_currents))
@@ -3563,7 +3627,11 @@ class ElectrochemicalAnimation():
                     except:
                         print('\n%s_raw_generator: Error in Surface Bound Baseline Creation\n' % self.spacer)
 
-                #-- if it is a solution phase species --#
+
+
+                ##############################
+                ### SOLUTION PHASE SPECIES ###
+                #############################
                 elif mass_transport == 'solution':
                     try:
                         try:
@@ -3697,9 +3765,9 @@ class ElectrochemicalAnimation():
                     except:
                         print('\n%s_raw_generator: Error in Solution Phase Baseline Creation\n' % self.spacer)
 
-                ################################################################
-                ### If the user selected Peak Height Extraction, analyze PHE ###
-                ################################################################
+            ################################################################
+            ### If the user selected Peak Height Extraction, analyze PHE ###
+            ################################################################
 
                 if SelectedOptions == 'Peak Height Extraction':
                     try:
@@ -3709,9 +3777,9 @@ class ElectrochemicalAnimation():
                     except:
                         print('\n%s_raw_generator: Error in PHE' % self.spacer)
 
-                ########################################################
-                ### If the user selected AUC extraction, analyze AUC ###
-                ########################################################
+            ########################################################
+            ### If the user selected AUC extraction, analyze AUC ###
+            ########################################################
 
                 elif SelectedOptions == 'Area Under the Curve':
 
@@ -3917,13 +3985,13 @@ class ElectrochemicalAnimation():
         try:
             #-- if the peak is positive (cathodic) --#
             if self.sign_dictionary[count] == 'cathodic':
-                peak_potential = self.data_dict[max(self.adjusted_currents)][0]
-                peak_index = self.potential_dict[peak_potential] - self.adjusted_index_list[0]
+                peak_potential = self.adjusted_data_dict[max(self.adjusted_currents)][0]
+                peak_index = self.adjusted_index_list[peak_potential]
 
             #-- if the peak is negative (anodic) --#
             elif self.sign_dictionary[count] == 'anodic':
-                peak_potential = self.data_dict[min(self.adjusted_currents)][0]
-                peak_index = self.potential_dict[peak_potential]  - self.adjusted_index_list[0]
+                peak_potential = self.adjusted_data_dict[min(self.adjusted_currents)][0]
+                peak_index = self.adjusted_index_list[peak_potential]
             return peak_potential, peak_index
 
         except:
@@ -3938,8 +4006,15 @@ class ElectrochemicalAnimation():
                 #-- Split the voltammogram before and after the peak  --#
                 #-- potential and extract the maxima for each besides --#
                 try:
-                    vertex1 = min(self.adjusted_currents[:self.peak_index])
-                    vertex2 = min(self.adjusted_currents[self.peak_index:])
+                    if self.peak_index > 0:
+                        vertex1 = min(self.adjusted_currents[:self.peak_index])
+                    else:
+                        vertex1 = self.adjusted_currents[0]
+
+                    if self.peak_index == len(self.adjusted_currents) - 1:
+                        vertex2 = self.adjusted_currents[-1]
+                    else:
+                        vertex2 = min(self.adjusted_currents[self.peak_index:])
                 except:
                     fit_half = int(len(self.adjusted_currents)/2)
                     vertex1 = min(self.adjusted_currents[:fit_half])
@@ -3949,8 +4024,15 @@ class ElectrochemicalAnimation():
                 #-- Split the voltammogram before and after the peak  --#
                 #-- potential and extract the maxima for each besides --#
                 try:
-                    vertex1 = max(self.adjusted_currents[:self.peak_index])
-                    vertex2 = max(self.adjusted_currents[self.peak_index:])
+                    if self.peak_index > 0:
+                        vertex1 = max(self.adjusted_currents[:self.peak_index])
+                    else:
+                        vertex1 = self.adjusted_currents[0]
+
+                    if self.peak_index == len(self.adjusted_currents) - 1:
+                        vertex2 = self.adjusted_currents[-1]
+                    else:
+                        vertex2 = max(self.adjusted_currents[self.peak_index:])
                 except:
                     fit_half = int(len(self.adjusted_currents)/2)
                     vertex1 = max(self.adjusted_currents[:fit_half])
@@ -3968,24 +4050,34 @@ class ElectrochemicalAnimation():
             ### if multiple potential values have a corresponding current     ###
             ### that equals the vertex current, find the closest to the peak  ###
             ### and extract the associated index value                        ###
-
             if len(vertex_potential) == 1:
-                vertex_potential = vertex_potential[0]
-                index = self.potential_dict[vertex_potential] - self.adjusted_index_list[0] # and the index value
+                try:
+                    vertex_potential = vertex_potential[0]
+                    index = self.adjusted_index_list[vertex_potential] # and the index value
+                except:
+                    print('Error in single vertex extraction')
             else:
                 list = []
-                for vertex in vertex_potential:
-                    if min(vertex_potentials) <= vertex <= max(vertex_potentials):
-                        list.append(vertex)
+                try:
+                    for vertex in vertex_potential:
+                        if len(vertex_potentials) == 1:
+                            if vertex == vertex_potentials[0]:
+                                list.append(vertex)
+                        elif min(vertex_potentials) <= vertex <= max(vertex_potentials):
+                            list.append(vertex)
 
+                except:
+                    print('Error in Vertex Adjustment')
                 #-- find the closest to the peak potential --#
+                if len(list) == 0:
+                    print('\nList is Empty')
                 vertex_check_list = {}
                 for vertex in list:
                     check_value = abs(peak_potential - vertex)
                     vertex_check_list[check_value] = vertex
                 check_value = min(vertex_check_list)
                 vertex_potential = vertex_check_list[check_value]
-                index = self.potential_dict[vertex_potential] - self.adjusted_index_list[0] # and the index value
+                index = self.adjusted_index_list[vertex_potential] # and the index value
 
             return vertex_potential, index
 
@@ -4188,14 +4280,14 @@ class TextFileExport():
                     list.append(peak_data_list[num]['reverse'][index])
 
             #-- Voltage 1 (Forwards, Reverse) --#
-            if self.potential_boolean:
+            if self.probe1_boolean:
                 if self.forward_boolean:
                     list.append(voltage1_data[num]['forward'][index])
                 if self.reverse_boolean:
                     list.append(voltage1_data[num]['reverse'][index])
 
             #-- Voltage 2 (Forwards, Reverse) --#
-            if self.probe_boolean:
+            if self.probe2_boolean:
                 if self.forward_boolean:
                     list.append(voltage2_data[num]['forward'][index])
                 if self.reverse_boolean:
